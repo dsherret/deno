@@ -13,6 +13,7 @@
 ((window) => {
   const core = window.Deno.core;
   const webidl = window.__bootstrap.webidl;
+  const { createFilteredInspectProxy } = window.__bootstrap.console;
 
   // TODO(lucacasonato): this needs to not be hardcoded and instead depend on
   // host os.
@@ -339,7 +340,14 @@
     }
 
     [Symbol.for("Deno.customInspect")](inspect) {
-      return `Blob ${inspect({ size: this.size, type: this.#type })}`;
+      return inspect(createFilteredInspectProxy({
+        object: this,
+        evaluate: this instanceof Blob,
+        keys: [
+          "size",
+          "type",
+        ],
+      }));
     }
   }
 
