@@ -12,26 +12,15 @@
     ArrayPrototypeFilter,
   } = window.__bootstrap.primordials;
 
-  function seekSync(
-    rid,
-    offset,
-    whence,
-  ) {
+  function seekSync(rid, offset, whence) {
     return core.opSync("op_seek_sync", { rid, offset, whence });
   }
 
-  function seek(
-    rid,
-    offset,
-    whence,
-  ) {
+  function seek(rid, offset, whence) {
     return core.opAsync("op_seek_async", { rid, offset, whence });
   }
 
-  function openSync(
-    path,
-    options = { read: true },
-  ) {
+  function openSync(path, options = { read: true }) {
     checkOpenOptions(options);
     const mode = options?.mode;
     const rid = core.opSync(
@@ -42,10 +31,7 @@
     return new File(rid);
   }
 
-  async function open(
-    path,
-    options = { read: true },
-  ) {
+  async function open(path, options = { read: true }) {
     checkOpenOptions(options);
     const mode = options?.mode;
     const rid = await core.opAsync(

@@ -486,12 +486,7 @@
     }
   }
 
-  function setTimer(
-    cb,
-    delay,
-    args,
-    repeat,
-  ) {
+  function setTimer(cb, delay, args, repeat) {
     // If the callack is a function, bind `args` to the callback and bind `this` to globalThis(global).
     // otherwise call `String` on it, and `eval` it on calls; do not pass variardic args to the string
     let callback;
@@ -533,21 +528,13 @@
     return timer.id;
   }
 
-  function setTimeout(
-    cb,
-    delay = 0,
-    ...args
-  ) {
+  function setTimeout(cb, delay = 0, ...args) {
     delay >>>= 0;
     checkThis(this);
     return setTimer(cb, delay, args, false);
   }
 
-  function setInterval(
-    cb,
-    delay = 0,
-    ...args
-  ) {
+  function setInterval(cb, delay = 0, ...args) {
     delay >>>= 0;
     checkThis(this);
     return setTimer(cb, delay, args, true);

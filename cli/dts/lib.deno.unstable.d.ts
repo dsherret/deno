@@ -31,9 +31,7 @@ declare namespace Deno {
    * const { columns, rows } = Deno.consoleSize(Deno.stdout.rid);
    * ```
    */
-  export function consoleSize(
-    rid: number,
-  ): {
+  export function consoleSize(rid: number): {
     columns: number;
     rows: number;
   };

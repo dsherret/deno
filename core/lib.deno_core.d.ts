@@ -8,18 +8,10 @@
 declare namespace Deno {
   declare namespace core {
     /** Call an op in Rust, and synchronously receive the result. */
-    function opSync(
-      opName: string,
-      a?: any,
-      b?: any,
-    ): any;
+    function opSync(opName: string, a?: any, b?: any): any;
 
     /** Call an op in Rust, and asynchronously receive the result. */
-    function opAsync(
-      opName: string,
-      a?: any,
-      b?: any,
-    ): Promise<any>;
+    function opAsync(opName: string, a?: any, b?: any): Promise<any>;
 
     /**
      * Retrieve a list of all registered ops, in the form of a map that maps op

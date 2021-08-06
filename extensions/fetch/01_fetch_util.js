@@ -3,11 +3,7 @@
 
 ((window) => {
   const { TypeError } = window.__bootstrap.primordials;
-  function requiredArguments(
-    name,
-    length,
-    required,
-  ) {
+  function requiredArguments(name, length, required) {
     if (length < required) {
       const errMsg = `${name} requires at least ${required} argument${
         required === 1 ? "" : "s"

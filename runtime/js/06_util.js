@@ -55,11 +55,7 @@
     return promise;
   }
 
-  function immutableDefine(
-    o,
-    p,
-    value,
-  ) {
+  function immutableDefine(o, p, value) {
     ObjectDefineProperty(o, p, {
       value,
       configurable: false,

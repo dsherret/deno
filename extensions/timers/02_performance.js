@@ -76,10 +76,7 @@
     return webidl.converters.DOMString(V, opts);
   };
 
-  function findMostRecent(
-    name,
-    type,
-  ) {
+  function findMostRecent(name, type) {
     return ArrayPrototypeFind(
       ArrayPrototypeReverse(ArrayPrototypeSlice(performanceEntries)),
       (entry) => entry.name === name && entry.entryType === type,
@@ -103,10 +100,7 @@
     return mark;
   }
 
-  function filterByNameType(
-    name,
-    type,
-  ) {
+  function filterByNameType(name, type) {
     return ArrayPrototypeFilter(
       performanceEntries,
       (entry) =>
@@ -206,10 +200,7 @@
       return "mark";
     }
 
-    constructor(
-      name,
-      options = {},
-    ) {
+    constructor(name, options = {}) {
       const prefix = "Failed to construct 'PerformanceMark'";
       webidl.requiredArguments(arguments.length, 1, { prefix });
 
@@ -369,10 +360,7 @@
       return filterByNameType();
     }
 
-    getEntriesByName(
-      name,
-      type = undefined,
-    ) {
+    getEntriesByName(name, type = undefined) {
       webidl.assertBranded(this, Performance);
       const prefix = "Failed to execute 'getEntriesByName' on 'Performance'";
       webidl.requiredArguments(arguments.length, 1, { prefix });
@@ -405,10 +393,7 @@
       return filterByNameType(undefined, type);
     }
 
-    mark(
-      markName,
-      markOptions = {},
-    ) {
+    mark(markName, markOptions = {}) {
       webidl.assertBranded(this, Performance);
       const prefix = "Failed to execute 'mark' on 'Performance'";
       webidl.requiredArguments(arguments.length, 1, { prefix });
@@ -432,11 +417,7 @@
       return entry;
     }
 
-    measure(
-      measureName,
-      startOrMeasureOptions = {},
-      endMark = undefined,
-    ) {
+    measure(measureName, startOrMeasureOptions = {}, endMark = undefined) {
       webidl.assertBranded(this, Performance);
       const prefix = "Failed to execute 'measure' on 'Performance'";
       webidl.requiredArguments(arguments.length, 1, { prefix });

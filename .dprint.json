@@ -3,7 +3,8 @@
   "projectType": "openSource",
   "incremental": true,
   "typescript": {
-    "deno": true
+    "deno": true,
+    "parameters.preferSingleLine": true
   },
   "markdown": {
     "deno": true

@@ -406,10 +406,7 @@ declare class Worker extends EventTarget {
   onerror?: (e: ErrorEvent) => void;
   onmessage?: (e: MessageEvent) => void;
   onmessageerror?: (e: MessageEvent) => void;
-  constructor(
-    specifier: string | URL,
-    options?: WorkerOptions,
-  );
+  constructor(specifier: string | URL, options?: WorkerOptions);
   postMessage(message: any, transfer: Transferable[]): void;
   postMessage(message: any, options?: PostMessageOptions): void;
   addEventListener<K extends keyof WorkerEventMap>(

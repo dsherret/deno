@@ -11,10 +11,7 @@
     TypedArrayPrototypeSubarray,
   } = window.__bootstrap.primordials;
 
-  async function read(
-    rid,
-    buffer,
-  ) {
+  async function read(rid, buffer) {
     if (buffer.length === 0) {
       return 0;
     }

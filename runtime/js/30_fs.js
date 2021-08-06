@@ -20,39 +20,25 @@
     await core.opAsync("op_chmod_async", { path: pathFromURL(path), mode });
   }
 
-  function chownSync(
-    path,
-    uid,
-    gid,
-  ) {
+  function chownSync(path, uid, gid) {
     core.opSync("op_chown_sync", { path: pathFromURL(path), uid, gid });
   }
 
-  async function chown(
-    path,
-    uid,
-    gid,
-  ) {
+  async function chown(path, uid, gid) {
     await core.opAsync(
       "op_chown_async",
       { path: pathFromURL(path), uid, gid },
     );
   }
 
-  function copyFileSync(
-    fromPath,
-    toPath,
-  ) {
+  function copyFileSync(fromPath, toPath) {
     core.opSync("op_copy_file_sync", {
       from: pathFromURL(fromPath),
       to: pathFromURL(toPath),
     });
   }
 
-  async function copyFile(
-    fromPath,
-    toPath,
-  ) {
+  async function copyFile(fromPath, toPath) {
     await core.opAsync("op_copy_file_async", {
       from: pathFromURL(fromPath),
       to: pathFromURL(toPath),
@@ -100,10 +86,7 @@
     core.opSync("op_mkdir_sync", mkdirArgs(path, options));
   }
 
-  async function mkdir(
-    path,
-    options,
-  ) {
+  async function mkdir(path, options) {
     await core.opAsync("op_mkdir_async", mkdirArgs(path, options));
   }
 
@@ -141,20 +124,14 @@
     return core.opAsync("op_realpath_async", pathFromURL(path));
   }
 
-  function removeSync(
-    path,
-    options = {},
-  ) {
+  function removeSync(path, options = {}) {
     core.opSync("op_remove_sync", {
       path: pathFromURL(path),
       recursive: !!options.recursive,
     });
   }
 
-  async function remove(
-    path,
-    options = {},
-  ) {
+  async function remove(path, options = {}) {
     await core.opAsync("op_remove_async", {
       path: pathFromURL(path),
       recursive: !!options.recursive,
@@ -297,11 +274,7 @@
     ];
   }
 
-  function futimeSync(
-    rid,
-    atime,
-    mtime,
-  ) {
+  function futimeSync(rid, atime, mtime) {
     core.opSync("op_futime_sync", {
       rid,
       atime: toUnixTimeFromEpoch(atime),
@@ -309,11 +282,7 @@
     });
   }
 
-  async function futime(
-    rid,
-    atime,
-    mtime,
-  ) {
+  async function futime(rid, atime, mtime) {
     await core.opAsync("op_futime_async", {
       rid,
       atime: toUnixTimeFromEpoch(atime),
@@ -321,11 +290,7 @@
     });
   }
 
-  function utimeSync(
-    path,
-    atime,
-    mtime,
-  ) {
+  function utimeSync(path, atime, mtime) {
     core.opSync("op_utime_sync", {
       path: pathFromURL(path),
       atime: toUnixTimeFromEpoch(atime),
@@ -333,11 +298,7 @@
     });
   }
 
-  async function utime(
-    path,
-    atime,
-    mtime,
-  ) {
+  async function utime(path, atime, mtime) {
     await core.opAsync("op_utime_async", {
       path: pathFromURL(path),
       atime: toUnixTimeFromEpoch(atime),
@@ -345,11 +306,7 @@
     });
   }
 
-  function symlinkSync(
-    oldpath,
-    newpath,
-    options,
-  ) {
+  function symlinkSync(oldpath, newpath, options) {
     core.opSync("op_symlink_sync", {
       oldpath: pathFromURL(oldpath),
       newpath: pathFromURL(newpath),
@@ -357,11 +314,7 @@
     });
   }
 
-  async function symlink(
-    oldpath,
-    newpath,
-    options,
-  ) {
+  async function symlink(oldpath, newpath, options) {
     await core.opAsync("op_symlink_async", {
       oldpath: pathFromURL(oldpath),
       newpath: pathFromURL(newpath),

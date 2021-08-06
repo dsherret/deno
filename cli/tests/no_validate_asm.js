@@ -4,9 +4,7 @@
 const _asmJsModule = function () {
   "use asm";
 
-  function func(
-    x,
-  ) {
+  function func(x) {
     x = +x; // cast to float
 
     ~x;

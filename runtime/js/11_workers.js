@@ -59,10 +59,7 @@
    * @param {string} permission
    * @return {boolean}
    */
-  function parseUnitPermission(
-    value,
-    permission,
-  ) {
+  function parseUnitPermission(value, permission) {
     if (value !== "inherit" && typeof value !== "boolean") {
       throw new Error(
         `Expected 'boolean' for ${permission} permission, ${typeof value} received`,
@@ -75,10 +72,7 @@
    * @param {string} permission
    * @return {(boolean | string[])}
    * */
-  function parseArrayPermission(
-    value,
-    permission,
-  ) {
+  function parseArrayPermission(value, permission) {
     if (typeof value === "string") {
       if (value !== "inherit") {
         throw new Error(

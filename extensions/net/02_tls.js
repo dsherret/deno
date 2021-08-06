@@ -5,9 +5,7 @@
   const core = window.Deno.core;
   const { Listener, Conn } = window.__bootstrap.net;
 
-  function opConnectTls(
-    args,
-  ) {
+  function opConnectTls(args) {
     return core.opAsync("op_connect_tls", args);
   }
 
@@ -64,10 +62,7 @@
     return new TLSListener(res.rid, res.localAddr);
   }
 
-  async function startTls(
-    conn,
-    { hostname = "127.0.0.1", certFile } = {},
-  ) {
+  async function startTls(conn, { hostname = "127.0.0.1", certFile } = {}) {
     const res = await opStartTls({
       rid: conn.rid,
       hostname,

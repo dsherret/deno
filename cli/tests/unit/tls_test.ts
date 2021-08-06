@@ -719,11 +719,7 @@ async function tlsWithTcpFailureTestImpl(
   tcpServerConn.close();
   tcpClientConn.close();
 
-  async function sendBytes(
-    conn: Deno.Conn,
-    byte: number,
-    count: number,
-  ) {
+  async function sendBytes(conn: Deno.Conn, byte: number, count: number) {
     let buf = new Uint8Array(1 << 12 /* 4 kB */);
     buf.fill(byte);
 
@@ -735,11 +731,7 @@ async function tlsWithTcpFailureTestImpl(
     }
   }
 
-  async function receiveBytes(
-    conn: Deno.Conn,
-    byte: number,
-    count: number,
-  ) {
+  async function receiveBytes(conn: Deno.Conn, byte: number, count: number) {
     let buf = new Uint8Array(1 << 12 /* 4 kB */);
     while (count > 0) {
       buf = buf.subarray(0, Math.min(buf.length, count));

@@ -25,9 +25,7 @@ unitTest({ perms: { read: true } }, function watchFsInvalidPath() {
   }
 });
 
-async function getTwoEvents(
-  iter: Deno.FsWatcher,
-): Promise<Deno.FsEvent[]> {
+async function getTwoEvents(iter: Deno.FsWatcher): Promise<Deno.FsEvent[]> {
   const events = [];
   for await (const event of iter) {
     events.push(event);

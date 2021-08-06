@@ -28,11 +28,7 @@
     End: 2,
   };
 
-  async function copy(
-    src,
-    dst,
-    options,
-  ) {
+  async function copy(src, dst, options) {
     let n = 0;
     const bufSize = options?.bufSize ?? DEFAULT_BUFFER_SIZE;
     const b = new Uint8Array(bufSize);
@@ -54,10 +50,7 @@
     return n;
   }
 
-  async function* iter(
-    r,
-    options,
-  ) {
+  async function* iter(r, options) {
     const bufSize = options?.bufSize ?? DEFAULT_BUFFER_SIZE;
     const b = new Uint8Array(bufSize);
     while (true) {
@@ -70,10 +63,7 @@
     }
   }
 
-  function* iterSync(
-    r,
-    options,
-  ) {
+  function* iterSync(r, options) {
     const bufSize = options?.bufSize ?? DEFAULT_BUFFER_SIZE;
     const b = new Uint8Array(bufSize);
     while (true) {
@@ -96,10 +86,7 @@
     return nread === 0 ? null : nread;
   }
 
-  async function read(
-    rid,
-    buffer,
-  ) {
+  async function read(rid, buffer) {
     if (buffer.length === 0) {
       return 0;
     }

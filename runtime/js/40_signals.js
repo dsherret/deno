@@ -240,10 +240,7 @@
       } while (!(await this.#pollingPromise) && !this.#disposed);
     };
 
-    then(
-      f,
-      g,
-    ) {
+    then(f, g) {
       const p = PromisePrototypeThen(this.#pollingPromise, (done) => {
         if (done) {
           // If pollingPromise returns true, then

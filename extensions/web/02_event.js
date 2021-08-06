@@ -53,10 +53,7 @@
     return Boolean(event[_stopImmediatePropagationFlag]);
   }
 
-  function setCurrentTarget(
-    event,
-    value,
-  ) {
+  function setCurrentTarget(event, value) {
     event[_attributes].currentTarget = value;
   }
 
@@ -80,10 +77,7 @@
     event[_path] = value;
   }
 
-  function setRelatedTarget(
-    event,
-    value,
-  ) {
+  function setRelatedTarget(event, value) {
     event[_attributes].relatedTarget = value;
   }
 
@@ -91,18 +85,13 @@
     event[_attributes].target = value;
   }
 
-  function setStopImmediatePropagation(
-    event,
-    value,
-  ) {
+  function setStopImmediatePropagation(event, value) {
     event[_stopImmediatePropagationFlag] = value;
   }
 
   // Type guards that widen the event type
 
-  function hasRelatedTarget(
-    event,
-  ) {
+  function hasRelatedTarget(event) {
     return "relatedTarget" in event;
   }
 
@@ -400,10 +389,7 @@
     }
   }
 
-  function defineEnumerableProps(
-    Ctor,
-    props,
-  ) {
+  function defineEnumerableProps(Ctor, props) {
     for (const prop of props) {
       ReflectDefineProperty(Ctor.prototype, prop, { enumerable: true });
     }
@@ -445,17 +431,12 @@
       : null;
   }
 
-  function isNode(
-    eventTarget,
-  ) {
+  function isNode(eventTarget) {
     return Boolean(eventTarget && "nodeType" in eventTarget);
   }
 
   // https://dom.spec.whatwg.org/#concept-shadow-including-inclusive-ancestor
-  function isShadowInclusiveAncestor(
-    ancestor,
-    node,
-  ) {
+  function isShadowInclusiveAncestor(ancestor, node) {
     while (isNode(node)) {
       if (node === ancestor) {
         return true;
@@ -480,9 +461,7 @@
     );
   }
 
-  function isSlotable(
-    nodeImpl,
-  ) {
+  function isSlotable(nodeImpl) {
     return Boolean(isNode(nodeImpl) && "assignedSlot" in nodeImpl);
   }
 
@@ -515,11 +494,7 @@
     });
   }
 
-  function dispatch(
-    targetImpl,
-    eventImpl,
-    targetOverride,
-  ) {
+  function dispatch(targetImpl, eventImpl, targetOverride) {
     let clearTargets = false;
     let activationTarget = null;
 
@@ -688,10 +663,7 @@
    * called.
    *
    * Ref: https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke */
-  function innerInvokeEventListeners(
-    eventImpl,
-    targetListeners,
-  ) {
+  function innerInvokeEventListeners(eventImpl, targetListeners) {
     let found = false;
 
     const { type } = eventImpl;
@@ -790,9 +762,7 @@
     innerInvokeEventListeners(eventImpl, getListeners(tuple.item));
   }
 
-  function normalizeAddEventHandlerOptions(
-    options,
-  ) {
+  function normalizeAddEventHandlerOptions(options) {
     if (typeof options === "boolean" || typeof options === "undefined") {
       return {
         capture: Boolean(options),
@@ -804,9 +774,7 @@
     }
   }
 
-  function normalizeEventHandlerOptions(
-    options,
-  ) {
+  function normalizeEventHandlerOptions(options) {
     if (typeof options === "boolean" || typeof options === "undefined") {
       return {
         capture: Boolean(options),
@@ -885,11 +853,7 @@
       WeakMapPrototypeSet(eventTargetData, this, getDefaultTargetData());
     }
 
-    addEventListener(
-      type,
-      callback,
-      options,
-    ) {
+    addEventListener(type, callback, options) {
       webidl.requiredArguments(arguments.length, 2, {
         prefix: "Failed to execute 'addEventListener' on 'EventTarget'",
       });
@@ -937,11 +901,7 @@
       ArrayPrototypePush(listeners[type], { callback, options });
     }
 
-    removeEventListener(
-      type,
-      callback,
-      options,
-    ) {
+    removeEventListener(type, callback, options) {
       webidl.requiredArguments(arguments.length, 2, {
         prefix: "Failed to execute 'removeEventListener' on 'EventTarget'",
       });
@@ -1035,19 +995,16 @@
       return this.#error;
     }
 
-    constructor(
-      type,
-      {
-        bubbles,
-        cancelable,
-        composed,
-        message = "",
-        filename = "",
-        lineno = 0,
-        colno = 0,
-        error = null,
-      } = {},
-    ) {
+    constructor(type, {
+      bubbles,
+      cancelable,
+      composed,
+      message = "",
+      filename = "",
+      lineno = 0,
+      colno = 0,
+      error = null,
+    } = {}) {
       super(type, {
         bubbles: bubbles,
         cancelable: cancelable,

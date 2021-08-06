@@ -63,11 +63,7 @@ async function fillBytes(
 
 // Empty buf through repeated reads into fub.
 // The initial contents of buf corresponds to the string s.
-async function empty(
-  buf: Deno.Buffer,
-  s: string,
-  fub: Uint8Array,
-) {
+async function empty(buf: Deno.Buffer, s: string, fub: Uint8Array) {
   check(buf, s);
   while (true) {
     const r = await buf.read(fub);

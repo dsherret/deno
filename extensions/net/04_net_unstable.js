@@ -13,9 +13,7 @@
     }
   }
 
-  function listenDatagram(
-    options,
-  ) {
+  function listenDatagram(options) {
     let res;
     if (options.transport === "unixpacket") {
       res = net.opListen(options);
@@ -30,9 +28,7 @@
     return new net.Datagram(res.rid, res.localAddr);
   }
 
-  async function connect(
-    options,
-  ) {
+  async function connect(options) {
     if (options.transport === "unix") {
       const res = await net.opConnect(options);
       return new net.Conn(res.rid, res.remoteAddr, res.localAddr);

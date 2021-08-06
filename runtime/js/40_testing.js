@@ -64,9 +64,7 @@ finishing test case.`,
   // Wrap test function in additional assertion that makes sure
   // the test case does not "leak" resources - ie. resource table after
   // the test has exactly the same contents as before the test.
-  function assertResources(
-    fn,
-  ) {
+  function assertResources(fn) {
     return async function resourceSanitizer() {
       const pre = core.resources();
       await fn();
@@ -132,10 +130,7 @@ finishing test case.`;
 
   // Main test function provided by Deno, as you can see it merely
   // creates a new object with "name" and "fn" fields.
-  function test(
-    t,
-    fn,
-  ) {
+  function test(t, fn) {
     let testDef;
     const defaults = {
       ignore: false,

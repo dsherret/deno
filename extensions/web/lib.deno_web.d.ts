@@ -519,13 +519,10 @@ interface ReadableStream<R = any> {
    */
   getIterator(options?: { preventCancel?: boolean }): AsyncIterableIterator<R>;
   getReader(): ReadableStreamDefaultReader<R>;
-  pipeThrough<T>(
-    { writable, readable }: {
-      writable: WritableStream<R>;
-      readable: ReadableStream<T>;
-    },
-    options?: PipeOptions,
-  ): ReadableStream<T>;
+  pipeThrough<T>({ writable, readable }: {
+    writable: WritableStream<R>;
+    readable: ReadableStream<T>;
+  }, options?: PipeOptions): ReadableStream<T>;
   pipeTo(dest: WritableStream<R>, options?: PipeOptions): Promise<void>;
   tee(): [ReadableStream<R>, ReadableStream<R>];
   [Symbol.asyncIterator](options?: {

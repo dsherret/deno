@@ -13,11 +13,7 @@
   } = window.__bootstrap.primordials;
   const illegalConstructorKey = Symbol("illegalConstructorKey");
 
-  function requiredArguments(
-    name,
-    length,
-    required,
-  ) {
+  function requiredArguments(name, length, required) {
     if (length < required) {
       const errMsg = `${name} requires at least ${required} argument${
         required === 1 ? "" : "s"

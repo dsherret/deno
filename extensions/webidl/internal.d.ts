@@ -300,10 +300,7 @@ declare namespace globalThis {
       >(
         keyConverter: (v: any, opts: ValueConverterOpts) => K,
         valueConverter: (v: any, opts: ValueConverterOpts) => V,
-      ): (
-        v: Record<K, V>,
-        opts: ValueConverterOpts,
-      ) => any;
+      ): (v: Record<K, V>, opts: ValueConverterOpts) => any;
 
       /**
        * Mix in the iterable declarations defined in WebIDL.
@@ -325,9 +322,7 @@ declare namespace globalThis {
       /**
        * Get the WebIDL / ES type of a value.
        */
-      declare function type(
-        v: any,
-      ):
+      declare function type(v: any):
         | "Null"
         | "Undefined"
         | "Boolean"

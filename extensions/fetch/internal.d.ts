@@ -41,9 +41,7 @@ declare namespace globalThis {
 
     declare namespace formData {
       declare type FormData = typeof FormData;
-      declare function formDataToBlob(
-        formData: globalThis.FormData,
-      ): Blob;
+      declare function formDataToBlob(formData: globalThis.FormData): Blob;
       declare function parseFormData(
         body: Uint8Array,
         boundary: string | undefined,

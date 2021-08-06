@@ -206,10 +206,7 @@
    * }} sourceMappingFn
    */
   function createPrepareStackTrace(sourceMappingFn) {
-    return function prepareStackTrace(
-      error,
-      callSites,
-    ) {
+    return function prepareStackTrace(error, callSites) {
       const mappedCallSites = ArrayPrototypeMap(callSites, (callSite) => {
         const fileName = callSite.getFileName();
         const lineNumber = callSite.getLineNumber();

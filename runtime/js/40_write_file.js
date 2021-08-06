@@ -8,11 +8,7 @@
     TypedArrayPrototypeSubarray,
   } = window.__bootstrap.primordials;
 
-  function writeFileSync(
-    path,
-    data,
-    options = {},
-  ) {
+  function writeFileSync(path, data, options = {}) {
     if (options.create !== undefined) {
       const create = !!options.create;
       if (!create) {
@@ -42,11 +38,7 @@
     file.close();
   }
 
-  async function writeFile(
-    path,
-    data,
-    options = {},
-  ) {
+  async function writeFile(path, data, options = {}) {
     if (options.create !== undefined) {
       const create = !!options.create;
       if (!create) {
@@ -76,20 +68,12 @@
     file.close();
   }
 
-  function writeTextFileSync(
-    path,
-    data,
-    options = {},
-  ) {
+  function writeTextFileSync(path, data, options = {}) {
     const encoder = new TextEncoder();
     return writeFileSync(path, encoder.encode(data), options);
   }
 
-  function writeTextFile(
-    path,
-    data,
-    options = {},
-  ) {
+  function writeTextFile(path, data, options = {}) {
     const encoder = new TextEncoder();
     return writeFile(path, encoder.encode(data), options);
   }

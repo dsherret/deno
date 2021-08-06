@@ -338,12 +338,7 @@
     return cyan(`[${cstrName}]`) + suffix;
   }
 
-  function inspectIterable(
-    value,
-    level,
-    options,
-    inspectOptions,
-  ) {
+  function inspectIterable(value, level, options, inspectOptions) {
     const cyan = maybeColor(colors.cyan, inspectOptions);
     if (level >= inspectOptions.depth) {
       return cyan(`[${options.typeName}]`);
@@ -435,12 +430,7 @@
 
   // Ported from Node.js
   // Copyright Node.js contributors. All rights reserved.
-  function groupEntries(
-    entries,
-    level,
-    value,
-    iterableLimit = 100,
-  ) {
+  function groupEntries(entries, level, value, iterableLimit = 100) {
     let totalLength = 0;
     let maxLength = 0;
     let entriesLength = entries.length;
@@ -546,11 +536,7 @@
     return entries;
   }
 
-  function _inspectValue(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function _inspectValue(value, level, inspectOptions) {
     const proxyDetails = core.getProxyDetails(value);
     if (proxyDetails != null && inspectOptions.showProxy) {
       return inspectProxy(proxyDetails, level, inspectOptions);
@@ -600,11 +586,7 @@
     }
   }
 
-  function inspectValue(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectValue(value, level, inspectOptions) {
     ArrayPrototypePush(CTX_STACK, value);
     let x;
     try {
@@ -706,11 +688,7 @@
   }
 
   // Print strings when they are inside of arrays or objects with quotes
-  function inspectValueWithQuotes(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectValueWithQuotes(value, level, inspectOptions) {
     const green = maybeColor(colors.green, inspectOptions);
     switch (typeof value) {
       case "string": {
@@ -724,11 +702,7 @@
     }
   }
 
-  function inspectArray(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectArray(value, level, inspectOptions) {
     const gray = maybeColor(colors.gray, inspectOptions);
     const options = {
       typeName: "Array",
@@ -756,12 +730,7 @@
     return inspectIterable(value, level, options, inspectOptions);
   }
 
-  function inspectTypedArray(
-    typedArrayName,
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectTypedArray(typedArrayName, value, level, inspectOptions) {
     const valueLength = value.length;
     const options = {
       typeName: typedArrayName,
@@ -777,11 +746,7 @@
     return inspectIterable(value, level, options, inspectOptions);
   }
 
-  function inspectSet(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectSet(value, level, inspectOptions) {
     const options = {
       typeName: "Set",
       displayName: "Set",
@@ -796,11 +761,7 @@
     return inspectIterable(value, level, options, inspectOptions);
   }
 
-  function inspectMap(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectMap(value, level, inspectOptions) {
     const options = {
       typeName: "Map",
       displayName: "Map",
@@ -870,11 +831,7 @@
     Rejected: 2,
   };
 
-  function inspectPromise(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectPromise(value, level, inspectOptions) {
     const cyan = maybeColor(colors.cyan, inspectOptions);
     const red = maybeColor(colors.red, inspectOptions);
 
@@ -905,19 +862,11 @@
     return `Promise { ${str} }`;
   }
 
-  function inspectProxy(
-    targetAndHandler,
-    level,
-    inspectOptions,
-  ) {
+  function inspectProxy(targetAndHandler, level, inspectOptions) {
     return `Proxy ${inspectArray(targetAndHandler, level, inspectOptions)}`;
   }
 
-  function inspectRawObject(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectRawObject(value, level, inspectOptions) {
     const cyan = maybeColor(colors.cyan, inspectOptions);
 
     if (level >= inspectOptions.depth) {
@@ -1066,11 +1015,7 @@
     return baseString;
   }
 
-  function inspectObject(
-    value,
-    level,
-    inspectOptions,
-  ) {
+  function inspectObject(value, level, inspectOptions) {
     if (customInspect in value && typeof value[customInspect] === "function") {
       return String(value[customInspect](inspect));
     }
@@ -1953,10 +1898,7 @@
 
   const customInspect = SymbolFor("Deno.customInspect");
 
-  function inspect(
-    value,
-    inspectOptions = {},
-  ) {
+  function inspect(value, inspectOptions = {}) {
     return inspectValue(value, 0, {
       ...DEFAULT_INSPECT_OPTIONS,
       ...inspectOptions,

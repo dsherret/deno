@@ -475,13 +475,9 @@ declare namespace Deno {
    * @param dst The destination to copy to
    * @param options Can be used to tune size of the buffer. Default size is 32kB
    */
-  export function copy(
-    src: Reader,
-    dst: Writer,
-    options?: {
-      bufSize?: number;
-    },
-  ): Promise<number>;
+  export function copy(src: Reader, dst: Writer, options?: {
+    bufSize?: number;
+  }): Promise<number>;
 
   /**
    * @deprecated Use iter from https://deno.land/std/io/util.ts instead. Deno.iter will be removed in Deno 2.0.
@@ -515,12 +511,9 @@ declare namespace Deno {
    * responsibility to copy contents of the buffer if needed; otherwise the
    * next iteration will overwrite contents of previously returned chunk.
    */
-  export function iter(
-    r: Reader,
-    options?: {
-      bufSize?: number;
-    },
-  ): AsyncIterableIterator<Uint8Array>;
+  export function iter(r: Reader, options?: {
+    bufSize?: number;
+  }): AsyncIterableIterator<Uint8Array>;
 
   /**
    * @deprecated Use iterSync from https://deno.land/std/io/util.ts instead. Deno.iterSync will be removed in Deno 2.0.
@@ -554,12 +547,9 @@ declare namespace Deno {
    * responsibility to copy contents of the buffer if needed; otherwise the
    * next iteration will overwrite contents of previously returned chunk.
    */
-  export function iterSync(
-    r: ReaderSync,
-    options?: {
-      bufSize?: number;
-    },
-  ): IterableIterator<Uint8Array>;
+  export function iterSync(r: ReaderSync, options?: {
+    bufSize?: number;
+  }): IterableIterator<Uint8Array>;
 
   /** Synchronously open a file and return an instance of `Deno.File`.  The
    * file does not need to previously exist if using the `create` or `createNew`

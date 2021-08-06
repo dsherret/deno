@@ -53,10 +53,7 @@
     }
   }
 
-  function watchFs(
-    paths,
-    options = { recursive: true },
-  ) {
+  function watchFs(paths, options = { recursive: true }) {
     return new FsWatcher(ArrayIsArray(paths) ? paths : [paths], options);
   }
 

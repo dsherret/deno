@@ -10,11 +10,7 @@
     typescript: "",
   };
 
-  function setVersions(
-    denoVersion,
-    v8Version,
-    tsVersion,
-  ) {
+  function setVersions(denoVersion, v8Version, tsVersion) {
     version.deno = denoVersion;
     version.v8 = v8Version;
     version.typescript = tsVersion;
