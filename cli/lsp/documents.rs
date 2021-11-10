@@ -245,6 +245,7 @@ impl SyntheticModule {
 }
 #[derive(Debug, Clone)]
 struct DocumentInner {
+  fs_version: String,
   line_index: Arc<LineIndex>,
   maybe_language_id: Option<LanguageId>,
   maybe_lsp_version: Option<i32>,
@@ -254,7 +255,6 @@ struct DocumentInner {
   maybe_warning: Option<String>,
   specifier: ModuleSpecifier,
   text_info: SourceTextInfo,
-  version: String,
 }
 
 #[derive(Debug, Clone)]
@@ -263,7 +263,7 @@ pub(crate) struct Document(Arc<DocumentInner>);
 impl Document {
   fn new(
     specifier: ModuleSpecifier,
-    version: String,
+    fs_version: String,
     maybe_headers: Option<&HashMap<String, String>>,
     content: Arc<String>,
     maybe_resolver: Option<&dyn deno_graph::source::Resolver>,
@@ -293,7 +293,7 @@ impl Document {
       maybe_warning,
       text_info: source,
       specifier,
-      version,
+      fs_version,
     }))
   }
 
@@ -328,7 +328,7 @@ impl Document {
       maybe_warning: None,
       text_info: source,
       specifier,
-      version: "1".to_string(),
+      fs_version: "1".to_string(),
     }))
   }
 
@@ -429,14 +429,14 @@ impl Document {
     self.0.line_index.clone()
   }
 
-  fn version(&self) -> &str {
-    self.0.version.as_str()
+  fn fs_version(&self) -> &str {
+    self.0.fs_version.as_str()
   }
 
   pub fn script_version(&self) -> String {
     self
       .maybe_lsp_version()
-      .map_or_else(|| self.version().to_string(), |v| v.to_string())
+      .map_or_else(|| self.fs_version().to_string(), |v| v.to_string())
   }
 
   pub fn is_diagnosable(&self) -> bool {
@@ -589,6 +589,66 @@ fn to_deno_graph_range(
   }
 }
 
+#[derive(Debug, Default)]
+struct SpecifierResolver {
+  cache: HttpCache,
+  redirects: Mutex<HashMap<ModuleSpecifier, ModuleSpecifier>>,
+}
+
+impl SpecifierResolver {
+  pub fn new(cache_path: &Path) -> Self {
+    Self {
+      cache: HttpCache::new(cache_path),
+      redirects: Mutex::new(HashMap::new()),
+    }
+  }
+
+  pub fn resolve(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Option<ModuleSpecifier> {
+    let scheme = specifier.scheme();
+    if !SUPPORTED_SCHEMES.contains(&scheme) {
+      return None;
+    }
+
+    if scheme == "data" || scheme == "blob" || scheme == "file" {
+      Some(specifier.clone())
+    } else {
+      let mut redirects = self.redirects.lock();
+      if let Some(specifier) = redirects.get(specifier) {
+        Some(specifier.clone())
+      } else {
+        let redirect = self.resolve_remote(specifier, 10)?;
+        redirects.insert(specifier.clone(), redirect.clone());
+        Some(redirect)
+      }
+    }
+  }
+
+  fn resolve_remote(
+    &self,
+    specifier: &ModuleSpecifier,
+    redirect_limit: usize,
+  ) -> Option<ModuleSpecifier> {
+    let cache_filename = self.cache.get_cache_filename(specifier)?;
+    if redirect_limit > 0 && cache_filename.is_file() {
+      let headers = http_cache::Metadata::read(&cache_filename)
+        .ok()
+        .map(|m| m.headers)?;
+      if let Some(location) = headers.get("location") {
+        let redirect =
+          deno_core::resolve_import(location, specifier.as_str()).ok()?;
+        self.resolve_remote(&redirect, redirect_limit - 1)
+      } else {
+        Some(specifier.clone())
+      }
+    } else {
+      None
+    }
+  }
+}
+
 /// Recurse and collect specifiers that appear in the dependent map.
 fn recurse_dependents(
   specifier: &ModuleSpecifier,
@@ -625,7 +685,8 @@ struct DocumentsInner {
   maybe_import_map: Option<ImportMapResolver>,
   /// The optional JSX resolver, which is used when JSX imports are configured.
   maybe_jsx_resolver: Option<JsxResolver>,
-  redirects: HashMap<ModuleSpecifier, ModuleSpecifier>,
+  /// Resolves a specifier to its final redirected to specifier.
+  specifier_resolver: SpecifierResolver,
 }
 
 impl DocumentsInner {
@@ -638,13 +699,13 @@ impl DocumentsInner {
       imports: HashMap::default(),
       maybe_import_map: None,
       maybe_jsx_resolver: None,
-      redirects: HashMap::default(),
+      specifier_resolver: SpecifierResolver::new(location),
     }
   }
 
   /// Adds a document by reading the document from the file system.
   fn add(&mut self, specifier: ModuleSpecifier) -> Option<Document> {
-    let version = self.calculate_version(&specifier)?;
+    let fs_version = self.calculate_fs_version(&specifier)?;
     let path = self.get_path(&specifier)?;
     let bytes = fs::read(path).ok()?;
     let doc = if specifier.scheme() == "file" {
@@ -653,7 +714,7 @@ impl DocumentsInner {
       let content = Arc::new(get_source_from_bytes(bytes, maybe_charset).ok()?);
       Document::new(
         specifier.clone(),
-        version,
+        fs_version,
         None,
         content,
         self.get_maybe_resolver(),
@@ -667,7 +728,7 @@ impl DocumentsInner {
       let content = Arc::new(get_source_from_bytes(bytes, maybe_charset).ok()?);
       Document::new(
         specifier.clone(),
-        version,
+        fs_version,
         maybe_headers,
         content,
         self.get_maybe_resolver(),
@@ -710,7 +771,10 @@ impl DocumentsInner {
     self.dependents_map = dependents_map;
   }
 
-  fn calculate_version(&self, specifier: &ModuleSpecifier) -> Option<String> {
+  fn calculate_fs_version(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Option<String> {
     let path = self.get_path(specifier)?;
     let metadata = fs::metadata(path).ok()?;
     if let Ok(modified) = metadata.modified() {
@@ -780,7 +844,8 @@ impl DocumentsInner {
 
   fn contains_specifier(&mut self, specifier: &ModuleSpecifier) -> bool {
     let specifier = self
-      .resolve_specifier(specifier)
+      .specifier_resolver
+      .resolve(specifier)
       .unwrap_or_else(|| specifier.clone());
     if !self.is_valid(&specifier) {
       self.add(specifier.clone());
@@ -797,7 +862,7 @@ impl DocumentsInner {
       self.dirty = false;
     }
     let mut dependents = HashSet::new();
-    if let Some(specifier) = self.resolve_specifier(specifier) {
+    if let Some(specifier) = self.specifier_resolver.resolve(specifier) {
       recurse_dependents(&specifier, &self.dependents_map, &mut dependents);
       dependents.into_iter().collect()
     } else {
@@ -806,16 +871,17 @@ impl DocumentsInner {
   }
 
   fn get(&mut self, specifier: &ModuleSpecifier) -> Option<&Document> {
-    let specifier = self.resolve_specifier(specifier)?;
+    let specifier = self.specifier_resolver.resolve(specifier)?;
     if !self.is_valid(&specifier) {
       self.add(specifier.clone());
     }
     self.docs.get(&specifier)
   }
 
-  fn get_cached(&mut self, specifier: &ModuleSpecifier) -> Option<&Document> {
+  fn get_cached(&self, specifier: &ModuleSpecifier) -> Option<&Document> {
     let specifier = self
-      .resolve_specifier(specifier)
+      .specifier_resolver
+      .resolve(specifier)
       .unwrap_or_else(|| specifier.clone());
     // this does not use `self.get` since that lazily adds documents, and we
     // only care about documents already in the cache.
@@ -843,16 +909,19 @@ impl DocumentsInner {
     }
   }
 
-  fn is_valid(&mut self, specifier: &ModuleSpecifier) -> bool {
+  fn is_valid(&self, specifier: &ModuleSpecifier) -> bool {
     if self
       .get_cached(specifier)
       .map(|d| d.is_open())
       .unwrap_or(false)
     {
       true
-    } else if let Some(specifier) = self.resolve_specifier(specifier) {
-      self.docs.get(&specifier).map(|d| d.version().to_string())
-        == self.calculate_version(&specifier)
+    } else if let Some(specifier) = self.specifier_resolver.resolve(specifier) {
+      self
+        .docs
+        .get(&specifier)
+        .map(|d| d.fs_version().to_string())
+        == self.calculate_fs_version(&specifier)
     } else {
       // even though it isn't valid, it just can't exist, so we will say it is
       // valid
@@ -978,51 +1047,10 @@ impl DocumentsInner {
     None
   }
 
-  fn resolve_remote_specifier(
-    &self,
-    specifier: &ModuleSpecifier,
-    redirect_limit: usize,
-  ) -> Option<ModuleSpecifier> {
-    let cache_filename = self.cache.get_cache_filename(specifier)?;
-    if redirect_limit > 0 && cache_filename.is_file() {
-      let headers = http_cache::Metadata::read(&cache_filename)
-        .ok()
-        .map(|m| m.headers)?;
-      if let Some(location) = headers.get("location") {
-        let redirect =
-          deno_core::resolve_import(location, specifier.as_str()).ok()?;
-        self.resolve_remote_specifier(&redirect, redirect_limit - 1)
-      } else {
-        Some(specifier.clone())
-      }
-    } else {
-      None
-    }
-  }
-
-  fn resolve_specifier(
-    &mut self,
-    specifier: &ModuleSpecifier,
-  ) -> Option<ModuleSpecifier> {
-    let scheme = specifier.scheme();
-    if !SUPPORTED_SCHEMES.contains(&scheme) {
-      return None;
-    }
-
-    if scheme == "data" || scheme == "blob" || scheme == "file" {
-      Some(specifier.clone())
-    } else if let Some(specifier) = self.redirects.get(specifier) {
-      Some(specifier.clone())
-    } else {
-      let redirect = self.resolve_remote_specifier(specifier, 10)?;
-      self.redirects.insert(specifier.clone(), redirect.clone());
-      Some(redirect)
-    }
-  }
-
   fn set_location(&mut self, location: PathBuf) {
     // TODO update resolved dependencies?
     self.cache = HttpCache::new(&location);
+    self.specifier_resolver = SpecifierResolver::new(&location);
     self.dirty = true;
   }
 
