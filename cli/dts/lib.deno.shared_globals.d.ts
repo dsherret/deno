@@ -401,12 +401,12 @@ declare class ErrorEvent extends Event {
 }
 
 interface AbstractWorkerEventMap {
-  "error": ErrorEvent;
+  error: ErrorEvent;
 }
 
 interface WorkerEventMap extends AbstractWorkerEventMap {
-  "message": MessageEvent;
-  "messageerror": MessageEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
 }
 
 interface WorkerOptions {

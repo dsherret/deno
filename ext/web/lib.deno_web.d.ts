@@ -306,12 +306,12 @@ declare var AbortSignal: {
 };
 
 interface FileReaderEventMap {
-  "abort": ProgressEvent<FileReader>;
-  "error": ProgressEvent<FileReader>;
-  "load": ProgressEvent<FileReader>;
-  "loadend": ProgressEvent<FileReader>;
-  "loadstart": ProgressEvent<FileReader>;
-  "progress": ProgressEvent<FileReader>;
+  abort: ProgressEvent<FileReader>;
+  error: ProgressEvent<FileReader>;
+  load: ProgressEvent<FileReader>;
+  loadend: ProgressEvent<FileReader>;
+  loadstart: ProgressEvent<FileReader>;
+  progress: ProgressEvent<FileReader>;
 }
 
 /** Lets web applications asynchronously read the contents of files (or raw data buffers) stored on the user's computer, using File or Blob objects to specify the file or data to read. */
@@ -754,8 +754,8 @@ declare class MessageChannel {
 }
 
 interface MessagePortEventMap {
-  "message": MessageEvent;
-  "messageerror": MessageEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
 }
 
 /** The MessagePort interface of the Channel Messaging API represents one of the

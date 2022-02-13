@@ -169,9 +169,9 @@ export function escapeLoneSurrogates(input: string | null): string | null {
 
 export async function generateRunInfo(): Promise<unknown> {
   const oses = {
-    "windows": "win",
-    "darwin": "mac",
-    "linux": "linux",
+    windows: "win",
+    darwin: "mac",
+    linux: "linux",
   };
   const proc = Deno.run({
     cmd: ["git", "rev-parse", "HEAD"],
@@ -190,24 +190,24 @@ export async function generateRunInfo(): Promise<unknown> {
   const version = JSON.parse(new TextDecoder().decode(await proc2.output()));
   proc2.close();
   const runInfo = {
-    "os": oses[Deno.build.os],
-    "processor": Deno.build.arch,
-    "version": "unknown",
-    "os_version": "unknown",
-    "bits": 64,
-    "has_sandbox": true,
-    "webrender": false,
-    "automation": false,
-    "linux_distro": "unknown",
-    "revision": revision,
-    "python_version": 3,
-    "product": "deno",
-    "debug": false,
-    "browser_version": version.deno,
-    "browser_channel": version.deno.includes("+") ? "canary" : "stable",
-    "verify": false,
-    "wasm": false,
-    "headless": true,
+    os: oses[Deno.build.os],
+    processor: Deno.build.arch,
+    version: "unknown",
+    os_version: "unknown",
+    bits: 64,
+    has_sandbox: true,
+    webrender: false,
+    automation: false,
+    linux_distro: "unknown",
+    revision: revision,
+    python_version: 3,
+    product: "deno",
+    debug: false,
+    browser_version: version.deno,
+    browser_channel: version.deno.includes("+") ? "canary" : "stable",
+    verify: false,
+    wasm: false,
+    headless: true,
   };
   return runInfo;
 }

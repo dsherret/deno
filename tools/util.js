@@ -109,9 +109,9 @@ export function getPrebuiltToolPath(toolName) {
   const PREBUILT_PATH = join(ROOT_PATH, "third_party", "prebuilt");
 
   const platformDirName = {
-    "windows": "win",
-    "darwin": "mac",
-    "linux": "linux64",
+    windows: "win",
+    darwin: "mac",
+    linux: "linux64",
   }[Deno.build.os];
   const executableSuffix = Deno.build.os === "windows" ? ".exe" : "";
   return join(PREBUILT_PATH, platformDirName, toolName + executableSuffix);

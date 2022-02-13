@@ -6,8 +6,8 @@
 /// <reference lib="esnext" />
 
 interface BroadcastChannelEventMap {
-  "message": MessageEvent;
-  "messageerror": MessageEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
 }
 
 interface BroadcastChannel extends EventTarget {

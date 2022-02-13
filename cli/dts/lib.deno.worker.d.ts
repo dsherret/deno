@@ -7,7 +7,7 @@
 /// <reference lib="esnext" />
 
 interface WorkerGlobalScopeEventMap {
-  "error": ErrorEvent;
+  error: ErrorEvent;
 }
 
 declare class WorkerGlobalScope extends EventTarget {
@@ -56,8 +56,8 @@ declare class WorkerNavigator {
 declare var navigator: WorkerNavigator;
 
 interface DedicatedWorkerGlobalScopeEventMap extends WorkerGlobalScopeEventMap {
-  "message": MessageEvent;
-  "messageerror": MessageEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
 }
 
 declare class DedicatedWorkerGlobalScope extends WorkerGlobalScope {

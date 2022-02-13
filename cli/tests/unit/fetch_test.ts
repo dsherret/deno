@@ -1105,7 +1105,7 @@ function returnHostHeaderServer(addr: string): Deno.Listener {
     await httpConn.nextRequest()
       .then(async (requestEvent: Deno.RequestEvent | null) => {
         const hostHeader = requestEvent?.request.headers.get("Host");
-        const headersToReturn = hostHeader ? { "Host": hostHeader } : undefined;
+        const headersToReturn = hostHeader ? { Host: hostHeader } : undefined;
 
         await requestEvent?.respondWith(
           new Response("", {
@@ -1129,7 +1129,7 @@ Deno.test(
     const addr = "127.0.0.1:4502";
     const listener = returnHostHeaderServer(addr);
     const response = await fetch(`http://${addr}/`, {
-      headers: { "Host": "example.com" },
+      headers: { Host: "example.com" },
     });
     await response.text();
     listener.close();
@@ -1341,13 +1341,13 @@ Deno.test(
       await assertRejects(() =>
         fetch("http://localhost:4545/echo_server", {
           method: "HEAD",
-          headers: { "val": String.fromCharCode(i) },
+          headers: { val: String.fromCharCode(i) },
         }), TypeError);
     }
     await assertRejects(() =>
       fetch("http://localhost:4545/echo_server", {
         method: "HEAD",
-        headers: { "val": String.fromCharCode(127) },
+        headers: { val: String.fromCharCode(127) },
       }), TypeError);
   },
 );

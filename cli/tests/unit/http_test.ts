@@ -51,14 +51,14 @@ Deno.test({ permissions: { net: true } }, async function httpServerBasic() {
       for await (const { request, respondWith } of httpConn) {
         assertEquals(new URL(request.url).href, "http://127.0.0.1:4501/");
         assertEquals(await request.text(), "");
-        respondWith(new Response("Hello World", { headers: { "foo": "bar" } }));
+        respondWith(new Response("Hello World", { headers: { foo: "bar" } }));
       }
       break;
     }
   })();
 
   const resp = await fetch("http://127.0.0.1:4501/", {
-    headers: { "connection": "close" },
+    headers: { connection: "close" },
   });
   const clone = resp.clone();
   const text = await resp.text();
@@ -163,7 +163,7 @@ Deno.test(
     const resp = await fetch("http://127.0.0.1:4501/", {
       body: stream.readable,
       method: "POST",
-      headers: { "connection": "close" },
+      headers: { connection: "close" },
     });
 
     await resp.arrayBuffer();
@@ -273,7 +273,7 @@ Deno.test(
     const client = Deno.createHttpClient({ caCerts: [caCert] });
     const resp = await fetch(`https://${hostname}:${port}/`, {
       client,
-      headers: { "connection": "close" },
+      headers: { connection: "close" },
     });
     const respBody = await resp.text();
     assertEquals("Hello World", respBody);

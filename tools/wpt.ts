@@ -244,15 +244,15 @@ async function generateWptReport(
       message: escapeLoneSurrogates(message),
       duration: result.duration,
       expected: status === "OK" ? undefined : "OK",
-      "known_intermittent": [],
+      known_intermittent: [],
     };
     reportResults.push(reportResult);
   }
   return {
-    "run_info": runInfo,
-    "time_start": startTime,
-    "time_end": endTime,
-    "results": reportResults,
+    run_info: runInfo,
+    time_start: startTime,
+    time_end: endTime,
+    results: reportResults,
   };
 }
 

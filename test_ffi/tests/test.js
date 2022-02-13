@@ -32,44 +32,44 @@ assertThrows(
 );
 
 const dylib = Deno.dlopen(libPath, {
-  "printSomething": {
+  printSomething: {
     name: "print_something",
     parameters: [],
     result: "void",
   },
-  "print_buffer": { parameters: ["pointer", "usize"], result: "void" },
-  "print_buffer2": {
+  print_buffer: { parameters: ["pointer", "usize"], result: "void" },
+  print_buffer2: {
     parameters: ["pointer", "usize", "pointer", "usize"],
     result: "void",
   },
-  "return_buffer": { parameters: [], result: "pointer" },
-  "is_null_ptr": { parameters: ["pointer"], result: "u8" },
-  "add_u32": { parameters: ["u32", "u32"], result: "u32" },
-  "add_i32": { parameters: ["i32", "i32"], result: "i32" },
-  "add_u64": { parameters: ["u64", "u64"], result: "u64" },
-  "add_i64": { parameters: ["i64", "i64"], result: "i64" },
-  "add_usize": { parameters: ["usize", "usize"], result: "usize" },
-  "add_isize": { parameters: ["isize", "isize"], result: "isize" },
-  "add_f32": { parameters: ["f32", "f32"], result: "f32" },
-  "add_f64": { parameters: ["f64", "f64"], result: "f64" },
-  "fill_buffer": { parameters: ["u8", "pointer", "usize"], result: "void" },
-  "sleep_nonblocking": {
+  return_buffer: { parameters: [], result: "pointer" },
+  is_null_ptr: { parameters: ["pointer"], result: "u8" },
+  add_u32: { parameters: ["u32", "u32"], result: "u32" },
+  add_i32: { parameters: ["i32", "i32"], result: "i32" },
+  add_u64: { parameters: ["u64", "u64"], result: "u64" },
+  add_i64: { parameters: ["i64", "i64"], result: "i64" },
+  add_usize: { parameters: ["usize", "usize"], result: "usize" },
+  add_isize: { parameters: ["isize", "isize"], result: "isize" },
+  add_f32: { parameters: ["f32", "f32"], result: "f32" },
+  add_f64: { parameters: ["f64", "f64"], result: "f64" },
+  fill_buffer: { parameters: ["u8", "pointer", "usize"], result: "void" },
+  sleep_nonblocking: {
     name: "sleep_blocking",
     parameters: ["u64"],
     result: "void",
     nonblocking: true,
   },
-  "sleep_blocking": { parameters: ["u64"], result: "void" },
-  "nonblocking_buffer": {
+  sleep_blocking: { parameters: ["u64"], result: "void" },
+  nonblocking_buffer: {
     parameters: ["pointer", "usize"],
     result: "void",
     nonblocking: true,
   },
-  "get_add_u32_ptr": {
+  get_add_u32_ptr: {
     parameters: [],
     result: "pointer",
   },
-  "get_sleep_blocking_ptr": {
+  get_sleep_blocking_ptr: {
     parameters: [],
     result: "pointer",
   },

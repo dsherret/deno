@@ -80,62 +80,62 @@
   };
 
   const supportedAlgorithms = {
-    "digest": {
+    digest: {
       "SHA-1": null,
       "SHA-256": null,
       "SHA-384": null,
       "SHA-512": null,
     },
-    "generateKey": {
+    generateKey: {
       "RSASSA-PKCS1-v1_5": "RsaHashedKeyGenParams",
       "RSA-PSS": "RsaHashedKeyGenParams",
       "RSA-OAEP": "RsaHashedKeyGenParams",
-      "ECDSA": "EcKeyGenParams",
-      "ECDH": "EcKeyGenParams",
+      ECDSA: "EcKeyGenParams",
+      ECDH: "EcKeyGenParams",
       "AES-CTR": "AesKeyGenParams",
       "AES-CBC": "AesKeyGenParams",
       "AES-GCM": "AesKeyGenParams",
       "AES-KW": "AesKeyGenParams",
-      "HMAC": "HmacKeyGenParams",
+      HMAC: "HmacKeyGenParams",
     },
-    "sign": {
+    sign: {
       "RSASSA-PKCS1-v1_5": null,
       "RSA-PSS": "RsaPssParams",
-      "ECDSA": "EcdsaParams",
-      "HMAC": null,
+      ECDSA: "EcdsaParams",
+      HMAC: null,
     },
-    "verify": {
+    verify: {
       "RSASSA-PKCS1-v1_5": null,
       "RSA-PSS": "RsaPssParams",
-      "ECDSA": "EcdsaParams",
-      "HMAC": null,
+      ECDSA: "EcdsaParams",
+      HMAC: null,
     },
-    "importKey": {
+    importKey: {
       "RSASSA-PKCS1-v1_5": "RsaHashedImportParams",
       "RSA-PSS": "RsaHashedImportParams",
       "RSA-OAEP": "RsaHashedImportParams",
-      "ECDSA": "EcKeyImportParams",
-      "ECDH": "EcKeyImportParams",
-      "HMAC": "HmacImportParams",
-      "HKDF": null,
-      "PBKDF2": null,
+      ECDSA: "EcKeyImportParams",
+      ECDH: "EcKeyImportParams",
+      HMAC: "HmacImportParams",
+      HKDF: null,
+      PBKDF2: null,
       "AES-CTR": null,
       "AES-CBC": null,
       "AES-GCM": null,
       "AES-KW": null,
     },
-    "deriveBits": {
-      "HKDF": "HkdfParams",
-      "PBKDF2": "Pbkdf2Params",
-      "ECDH": "EcdhKeyDeriveParams",
+    deriveBits: {
+      HKDF: "HkdfParams",
+      PBKDF2: "Pbkdf2Params",
+      ECDH: "EcdhKeyDeriveParams",
     },
-    "encrypt": {
+    encrypt: {
       "RSA-OAEP": "RsaOaepParams",
       "AES-CBC": "AesCbcParams",
       "AES-GCM": "AesGcmParams",
       "AES-CTR": "AesCtrParams",
     },
-    "decrypt": {
+    decrypt: {
       "RSA-OAEP": "RsaOaepParams",
       "AES-CBC": "AesCbcParams",
       "AES-GCM": "AesGcmParams",
@@ -146,14 +146,14 @@
       "AES-CTR": "AesDerivedKeyParams",
       "AES-GCM": "AesDerivedKeyParams",
       "AES-KW": "AesDerivedKeyParams",
-      "HMAC": "HmacImportParams",
-      "HKDF": null,
-      "PBKDF2": null,
+      HMAC: "HmacImportParams",
+      HKDF: null,
+      PBKDF2: null,
     },
-    "wrapKey": {
+    wrapKey: {
       "AES-KW": null,
     },
-    "unwrapKey": {
+    unwrapKey: {
       "AES-KW": null,
     },
   };
@@ -2703,12 +2703,12 @@
       private: ["decrypt", "unwrapKey"],
       jwtUse: "enc",
     },
-    "ECDSA": {
+    ECDSA: {
       public: ["verify"],
       private: ["sign"],
       jwtUse: "sig",
     },
-    "ECDH": {
+    ECDH: {
       public: [],
       private: ["deriveKey", "deriveBits"],
       jwtUse: "enc",

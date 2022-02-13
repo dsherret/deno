@@ -56,7 +56,7 @@ function runFlamegraph(benchBin, benchFilter, outputFile) {
   return bashThrough(
     `sudo -E flamegraph -o ${outputFile} ${benchBin} ${benchFilter ?? ""}`,
     // Set $PROFILING env so benches can improve their flamegraphs
-    { env: { "PROFILING": "1" } },
+    { env: { PROFILING: "1" } },
   );
 }
 

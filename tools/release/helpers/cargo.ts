@@ -5,9 +5,9 @@ import { runCommand } from "./helpers.ts";
 export interface CargoMetadata {
   packages: CargoPackageMetadata[];
   /** Identifiers in the `packages` array of the workspace members. */
-  "workspace_members": string[];
+  workspace_members: string[];
   /** The absolute workspace root directory path. */
-  "workspace_root": string;
+  workspace_root: string;
 }
 
 export interface CargoPackageMetadata {
@@ -16,7 +16,7 @@ export interface CargoPackageMetadata {
   version: string;
   dependencies: CargoDependencyMetadata[];
   /** Path to Cargo.toml */
-  "manifest_path": string;
+  manifest_path: string;
 }
 
 export interface CargoDependencyMetadata {

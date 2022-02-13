@@ -587,7 +587,7 @@ finishing test case.`;
       await test.fn(step);
       const failCount = step.failedChildStepsCount();
       return failCount === 0 ? "ok" : {
-        "failed": formatError(
+        failed: formatError(
           new Error(
             `${failCount} test step${failCount === 1 ? "" : "s"} failed.`,
           ),
@@ -595,7 +595,7 @@ finishing test case.`;
       };
     } catch (error) {
       return {
-        "failed": formatError(error),
+        failed: formatError(error),
       };
     } finally {
       step.finalized = true;
@@ -868,11 +868,11 @@ finishing test case.`;
           return "ignored";
         case "pending":
           return {
-            "pending": this.error && formatError(this.error),
+            pending: this.error && formatError(this.error),
           };
         case "failed":
           return {
-            "failed": this.error && formatError(this.error),
+            failed: this.error && formatError(this.error),
           };
         default:
           throw new Error(`Unhandled status: ${this.status}`);

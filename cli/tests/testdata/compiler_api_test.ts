@@ -150,7 +150,7 @@ Deno.test({
       {
         importMap: {
           imports: {
-            "b": "./b.ts",
+            b: "./b.ts",
           },
         },
         importMapPath: "file:///import-map.json",
