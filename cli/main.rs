@@ -102,6 +102,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 fn create_web_worker_preload_module_callback(
   ps: ProcState,
@@ -212,6 +213,11 @@ pub fn create_main_worker(
 
   let maybe_inspector_server = ps.maybe_inspector_server.clone();
   let should_break_on_first_statement = ps.flags.inspect_brk.is_some();
+  let inspect_connection_wait_duration = if ps.flags.inspect.is_some() {
+    Some(Duration::from_millis(10_000)) // todo: lower
+  } else {
+    None
+  };
 
   let create_web_worker_cb = create_web_worker_callback(ps.clone());
   let web_worker_preload_module_cb =
@@ -275,6 +281,7 @@ pub fn create_main_worker(
     web_worker_preload_module_cb,
     maybe_inspector_server,
     should_break_on_first_statement,
+    inspect_connection_wait_duration,
     module_loader,
     get_error_class_fn: Some(&crate::errors::get_error_class_name),
     origin_storage_dir,

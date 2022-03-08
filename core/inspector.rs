@@ -9,6 +9,7 @@ use crate::futures::channel::mpsc;
 use crate::futures::channel::mpsc::UnboundedReceiver;
 use crate::futures::channel::mpsc::UnboundedSender;
 use crate::futures::channel::oneshot;
+use crate::futures::future::poll_fn;
 use crate::futures::future::select;
 use crate::futures::future::Either;
 use crate::futures::future::Future;
@@ -204,6 +205,7 @@ impl JsRuntimeInspector {
     &self,
     mut invoker_cx: Option<&mut Context>,
   ) -> Result<Poll<()>, BorrowMutError> {
+    file_log("HERE");
     // The futures this function uses do not have re-entrant poll() functions.
     // However it is can happpen that poll_sessions() gets re-entered, e.g.
     // when an interrupt request is honored while the inspector future is polled
@@ -230,12 +232,14 @@ impl JsRuntimeInspector {
           match poll_result {
             Poll::Pending => {
               sessions.established.push(session);
+              file_log("established");
               continue;
             }
             Poll::Ready(Some(session_stream_item)) => {
               let (v8_session_ptr, msg) = session_stream_item;
               InspectorSession::dispatch_message(v8_session_ptr, msg);
               sessions.established.push(session);
+              file_log("established");
               continue;
             }
             Poll::Ready(None) => {}
@@ -324,6 +328,26 @@ impl JsRuntimeInspector {
         }
       };
     }
+  }
+
+  pub async fn wait_for_session(&self) -> Result<(), BorrowMutError> {
+    poll_fn(|cx| {
+      // this while loop was just for testing purposes
+      while !self.has_active_sessions() {
+        file_log("HERE 2");
+        let result = match self.poll_sessions(Some(cx)) {
+          Ok(Poll::Ready(())) => Poll::Ready(Ok(())),
+          Ok(Poll::Pending) => {
+            file_log("PENDING");
+            Poll::Pending
+          }
+          Err(err) => Poll::Ready(Err(err)),
+        };
+      }
+      file_log("HERE ACTIVE");
+      Poll::Ready(Ok(()))
+    })
+    .await
   }
 
   /// Obtain a sender for proxy channels.
@@ -732,4 +756,25 @@ fn new_box_with<T>(new_fn: impl FnOnce(*mut T) -> T) -> Box<T> {
   let p = Box::into_raw(b) as *mut T;
   unsafe { ptr::write(p, new_fn(p)) };
   unsafe { Box::from_raw(p) }
+}
+
+pub fn file_log(text: &str) {
+  use std::io::prelude::*;
+
+  let mut file = std::fs::OpenOptions::new()
+    .write(true)
+    .append(true)
+    .create(true)
+    .open("data.log")
+    .unwrap();
+  writeln!(
+    file,
+    "{}: {}",
+    std::time::SystemTime::now()
+      .duration_since(std::time::SystemTime::UNIX_EPOCH)
+      .unwrap()
+      .as_millis(),
+    text
+  )
+  .unwrap();
 }

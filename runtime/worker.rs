@@ -30,6 +30,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
+use std::time::Duration;
 
 /// This worker is created and used by almost all
 /// subcommands in Deno executable.
@@ -41,6 +42,7 @@ use std::task::Poll;
 pub struct MainWorker {
   pub js_runtime: JsRuntime,
   should_break_on_first_statement: bool,
+  inspect_connection_wait_duration: Option<Duration>,
 }
 
 pub struct WorkerOptions {
@@ -57,6 +59,9 @@ pub struct WorkerOptions {
   pub js_error_create_fn: Option<Rc<JsErrorCreateFn>>,
   pub maybe_inspector_server: Option<Arc<InspectorServer>>,
   pub should_break_on_first_statement: bool,
+  /// The amount of time to wait for an inspector connection
+  /// and initialization before executing the code in the worker.
+  pub inspect_connection_wait_duration: Option<Duration>,
   pub get_error_class_fn: Option<GetErrorClassFn>,
   pub origin_storage_dir: Option<std::path::PathBuf>,
   pub blob_store: BlobStore,
@@ -174,6 +179,8 @@ impl MainWorker {
     Self {
       js_runtime,
       should_break_on_first_statement: options.should_break_on_first_statement,
+      inspect_connection_wait_duration: options
+        .inspect_connection_wait_duration,
     }
   }
 
@@ -236,7 +243,7 @@ impl MainWorker {
     module_specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let id = self.preload_module(module_specifier, false).await?;
-    self.wait_for_inspector_session();
+    self.wait_for_inspector_session_if_necessary().await;
     self.evaluate_module(id).await
   }
 
@@ -248,16 +255,22 @@ impl MainWorker {
     module_specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let id = self.preload_module(module_specifier, true).await?;
-    self.wait_for_inspector_session();
+    self.wait_for_inspector_session_if_necessary().await;
     self.evaluate_module(id).await
   }
 
-  fn wait_for_inspector_session(&mut self) {
+  async fn wait_for_inspector_session_if_necessary(&mut self) {
     if self.should_break_on_first_statement {
       self
         .js_runtime
         .inspector()
         .wait_for_session_and_break_on_next_statement()
+    } else if let Some(duration) = self.inspect_connection_wait_duration.clone()
+    {
+      tokio::select! {
+        _ = self.js_runtime.inspector().wait_for_session() => {}
+        _ = tokio::time::sleep(duration) => {}
+      };
     }
   }
 
@@ -375,6 +388,7 @@ mod tests {
       create_web_worker_cb: Arc::new(|_| unreachable!()),
       maybe_inspector_server: None,
       should_break_on_first_statement: false,
+      inspect_connection_wait_duration: None,
       module_loader: Rc::new(deno_core::FsModuleLoader),
       get_error_class_fn: None,
       origin_storage_dir: None,

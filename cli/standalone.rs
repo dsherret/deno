@@ -292,6 +292,7 @@ pub async fn run(
     web_worker_preload_module_cb,
     maybe_inspector_server: None,
     should_break_on_first_statement: false,
+    inspect_connection_wait_duration: None,
     module_loader,
     get_error_class_fn: Some(&get_error_class_name),
     origin_storage_dir: None,
