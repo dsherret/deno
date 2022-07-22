@@ -23,6 +23,7 @@ mod lockfile;
 mod logger;
 mod lsp;
 mod module_loader;
+mod npm;
 mod ops;
 mod proc_state;
 mod resolver;
