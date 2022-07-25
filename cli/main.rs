@@ -66,6 +66,7 @@ use crate::file_watcher::ResolutionResult;
 use crate::fmt_errors::format_js_error;
 use crate::graph_util::graph_lock_or_exit;
 use crate::graph_util::graph_valid;
+use crate::graph_util::GraphData;
 use crate::module_loader::CliModuleLoader;
 use crate::proc_state::ProcState;
 use crate::resolver::ImportMapResolver;
@@ -669,7 +670,7 @@ async fn create_graph_and_maybe_check(
     let cache = TypeCheckCache::new(&ps.dir.type_checking_cache_db_file_path());
     let check_result = emit::check(
       &graph.roots,
-      Arc::new(RwLock::new(graph.as_ref().into())),
+      Arc::new(RwLock::new(GraphData::from_module_graph(graph.as_ref())?)),
       &cache,
       emit::CheckOptions {
         type_check_mode: ps.options.type_check_mode(),

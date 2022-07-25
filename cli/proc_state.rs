@@ -431,7 +431,7 @@ impl ProcState {
 
     let npm_package_references = {
       let mut graph_data = self.graph_data.write();
-      graph_data.add_graph(&graph, reload_on_watch);
+      graph_data.add_graph(&graph, reload_on_watch)?;
       let check_js = self.options.check_js();
       graph_data
         .check(
