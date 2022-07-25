@@ -48,9 +48,15 @@ fn setup_packages(
         cache.ensure_package(&package.id, &package.dist).await?;
       let local_folder = output_dir.join(&package.id.name);
       if package.sub_packages.is_empty() {
+        // ensure the local directory doesn't exist
+        fs::remove_dir_all(&local_folder)?;
         // no sub packages, so create a symlink
         symlink_dir(&local_folder, &cache_folder)?;
       } else {
+        // todo: check if the directoy exists... if it does, then check
+        // it's package.json's name and version and skip copying it and
+        // all node_modules folders if it's the same
+
         // there's sub packages, so copy the data here
         copy_dir(&cache_folder, &local_folder)?;
         let sub_node_modules = local_folder.join("node_modules");

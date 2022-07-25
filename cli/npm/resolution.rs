@@ -1,8 +1,10 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use deno_ast::ModuleSpecifier;
 use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
@@ -14,10 +16,48 @@ use super::registry::NpmPackageVersionDistInfo;
 use super::registry::NpmPackageVersionInfo;
 use super::registry::NpmRegistryApi;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct NpmPackageReference {
   pub name: String,
   pub version_req: semver::VersionReq,
+}
+
+impl NpmPackageReference {
+  pub fn from_specifier(
+    specifier: &ModuleSpecifier,
+  ) -> Result<NpmPackageReference, AnyError> {
+    Self::from_str(specifier.as_str())
+  }
+
+  pub fn from_str(specifier: &str) -> Result<NpmPackageReference, AnyError> {
+    let specifier = match specifier.strip_prefix("npm:") {
+      Some(s) => s,
+      None => {
+        bail!("not an npm specifier for '{}'", specifier);
+      }
+    };
+    let (name, version_req) = match specifier.rsplit_once('@') {
+      Some(r) => r,
+      None => {
+        bail!(
+          "npm specifier must include a version (ex. `package@1.0.0`) for '{}'",
+          specifier
+        );
+      }
+    };
+    let version_req = match semver::VersionReq::parse(version_req) {
+      Ok(v) => v,
+      Err(err) => bail!(
+        "npm specifier must have a valid version requirement for '{}'.\n\n{}",
+        specifier,
+        err
+      ),
+    };
+    Ok(NpmPackageReference {
+      name: name.to_string(),
+      version_req,
+    })
+  }
 }
 
 pub struct NpmPackageId {

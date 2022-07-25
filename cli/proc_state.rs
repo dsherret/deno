@@ -22,6 +22,7 @@ use crate::graph_util::ModuleEntry;
 use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
+use crate::npm::NpmPackageReference;
 use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
 
@@ -331,13 +332,28 @@ impl ProcState {
         &self,
         specifier: &ModuleSpecifier,
       ) -> Option<CacheInfo> {
-        self.inner.get_cache_info(specifier)
+        if specifier.scheme() == "npm" {
+          None
+        } else {
+          self.inner.get_cache_info(specifier)
+        }
       }
       fn load(
         &mut self,
         specifier: &ModuleSpecifier,
         is_dynamic: bool,
       ) -> LoadFuture {
+        if specifier.scheme() == "npm" {
+          return Box::pin(futures::future::ready(
+            match NpmPackageReference::from_specifier(&specifier) {
+              Ok(_) => Ok(Some(deno_graph::source::LoadResponse::External {
+                specifier: specifier.clone(),
+              })),
+              Err(err) => Err(err),
+            },
+          ));
+        }
+
         let graph_data = self.graph_data.read();
         let found_specifier = graph_data.follow_redirect(specifier);
         match graph_data.get(&found_specifier) {

@@ -3,6 +3,7 @@
 use crate::colors;
 use crate::emit::TsTypeLib;
 use crate::errors::get_error_class_name;
+use crate::npm::NpmPackageReference;
 
 use deno_ast::ParsedSource;
 use deno_core::error::custom_error;
@@ -60,6 +61,7 @@ pub enum ModuleEntry {
 #[derive(Debug, Default)]
 pub struct GraphData {
   modules: HashMap<ModuleSpecifier, ModuleEntry>,
+  npm_packages: HashSet<NpmPackageReference>,
   /// Map of first known referrer locations for each module. Used to enhance
   /// error messages.
   referrer_map: HashMap<ModuleSpecifier, Range>,
@@ -72,6 +74,13 @@ impl GraphData {
   pub fn add_graph(&mut self, graph: &ModuleGraph, reload: bool) {
     for (specifier, result) in graph.specifiers() {
       if !reload && self.modules.contains_key(&specifier) {
+        continue;
+      }
+      if specifier.scheme() == "npm" {
+        // the loader enforces npm specifiers are valid, so it's ok to unwrap here
+        let reference =
+          NpmPackageReference::from_specifier(&specifier).unwrap();
+        self.npm_packages.insert(reference);
         continue;
       }
       if let Some(found) = graph.redirects.get(&specifier) {
@@ -221,7 +230,10 @@ impl GraphData {
               }
             }
           }
-          for (_, dep) in dependencies.iter().rev() {
+          for (dep_specifier, dep) in dependencies.iter().rev() {
+            if NpmPackageReference::from_str(dep_specifier).is_ok() {
+              continue;
+            }
             if !dep.is_dynamic || follow_dynamic {
               let mut resolutions = vec![&dep.maybe_code];
               if check_types {
@@ -281,6 +293,7 @@ impl GraphData {
     }
     Some(Self {
       modules,
+      npm_packages: self.npm_packages.clone(),
       referrer_map,
       configurations: self.configurations.clone(),
       cjs_esm_translations: Default::default(),
