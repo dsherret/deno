@@ -17,7 +17,7 @@ use deno_runtime::deno_fetch::reqwest;
 #[derive(Deserialize, Clone)]
 pub struct NpmPackageInfo {
   pub name: String,
-  pub versions: Vec<NpmPackageVersionInfo>,
+  pub versions: HashMap<String, NpmPackageVersionInfo>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -25,14 +25,15 @@ pub struct NpmPackageVersionInfo {
   pub version: String,
   pub dist: NpmPackageVersionDistInfo,
   // Package name to version.
+  #[serde(default)]
   pub dependencies: HashMap<String, String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct NpmPackageVersionDistInfo {
   /// URL to the tarball.
   pub tarball: String,
-  pub shasum: String,
+  pub integrity: String,
 }
 
 #[derive(Clone)]

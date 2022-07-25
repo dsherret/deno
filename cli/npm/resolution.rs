@@ -1,6 +1,5 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -60,6 +59,7 @@ impl NpmPackageReference {
   }
 }
 
+#[derive(Debug)]
 pub struct NpmPackageId {
   pub name: String,
   pub version: semver::Version,
@@ -71,6 +71,7 @@ impl std::fmt::Display for NpmPackageId {
   }
 }
 
+#[derive(Debug)]
 pub struct NpmPackageResolution {
   pub id: NpmPackageId,
   pub dist: NpmPackageVersionDistInfo,
@@ -177,7 +178,7 @@ fn resolve_packages_inner(
       if maybe_ancestor_version.is_none() {
         let info = api.package_info(&package.name).await?;
         let mut maybe_best_version: Option<VersionAndInfo> = None;
-        for version_info in info.versions {
+        for (_, version_info) in info.versions.into_iter() {
           let version = semver::Version::parse(&version_info.version)?;
           if package.version_req.matches(&version) {
             let is_best_version = maybe_best_version

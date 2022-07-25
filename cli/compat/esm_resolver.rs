@@ -78,7 +78,7 @@ static DEFAULT_CONDITIONS: &[&str] = &["deno", "node", "import"];
 
 /// This function is an implementation of `defaultResolve` in
 /// `lib/internal/modules/esm/resolve.js` from Node.
-fn node_resolve(
+pub fn node_resolve(
   specifier: &str,
   referrer: &str,
   cwd: &std::path::Path,

@@ -9,6 +9,7 @@ use crate::cache::EmitCache;
 use crate::cache::FastInsecureHasher;
 use crate::cache::TypeCheckCache;
 use crate::compat;
+use crate::compat::node_resolve;
 use crate::compat::NodeEsmResolver;
 use crate::deno_dir;
 use crate::emit;
@@ -22,6 +23,7 @@ use crate::graph_util::ModuleEntry;
 use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
+use crate::npm;
 use crate::npm::NpmPackageReference;
 use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
@@ -345,7 +347,7 @@ impl ProcState {
       ) -> LoadFuture {
         if specifier.scheme() == "npm" {
           return Box::pin(futures::future::ready(
-            match NpmPackageReference::from_specifier(&specifier) {
+            match npm::NpmPackageReference::from_specifier(&specifier) {
               Ok(_) => Ok(Some(deno_graph::source::LoadResponse::External {
                 specifier: specifier.clone(),
               })),
@@ -427,7 +429,7 @@ impl ProcState {
       graph_data.entries().map(|(s, _)| s).cloned().collect()
     };
 
-    {
+    let npm_package_references = {
       let mut graph_data = self.graph_data.write();
       graph_data.add_graph(&graph, reload_on_watch);
       let check_js = self.options.check_js();
@@ -438,6 +440,12 @@ impl ProcState {
           check_js,
         )
         .unwrap()?;
+      graph_data.npm_package_references()
+    };
+
+    if !npm_package_references.is_empty() {
+      let npm_cache = npm::NpmCache::new(self.dir.root.join("npm"));
+      npm::npm_install(npm_package_references, npm_cache).await?;
     }
 
     // type check if necessary
@@ -486,6 +494,14 @@ impl ProcState {
     specifier: &str,
     referrer: &str,
   ) -> Result<ModuleSpecifier, AnyError> {
+    // handle npm:<package-name>@<version> specifiers
+    if let Ok(reference) = NpmPackageReference::from_str(&specifier) {
+      let current_dir = std::env::current_dir()?;
+      // todo(dsherret): needs to take version into consideration
+      return node_resolve(&reference.name, referrer, &current_dir)?
+        .to_result();
+    }
+
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
       let graph_data = self.graph_data.read();
       let found_referrer = graph_data.follow_redirect(&referrer);

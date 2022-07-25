@@ -180,6 +180,10 @@ impl GraphData {
     self.modules.iter()
   }
 
+  pub fn npm_package_references(&self) -> Vec<NpmPackageReference> {
+    self.npm_packages.iter().cloned().collect()
+  }
+
   /// Walk dependencies from `roots` and return every encountered specifier.
   /// Return `None` if any modules are not known.
   pub fn walk<'a>(

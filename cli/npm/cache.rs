@@ -8,8 +8,7 @@ use deno_core::error::AnyError;
 use deno_runtime::colors;
 use deno_runtime::deno_fetch::reqwest;
 
-use super::tarball::extract_tarball;
-use super::tarball::verify_tarball;
+use super::tarball::verify_and_extract_tarball;
 use super::NpmPackageId;
 use super::NpmPackageVersionDistInfo;
 
@@ -34,8 +33,6 @@ impl NpmCache {
       return Ok(package_folder);
     }
 
-    fs::create_dir_all(&package_folder)?;
-
     log::log!(
       log::Level::Info,
       "{} {}",
@@ -51,9 +48,35 @@ impl NpmCache {
       bail!("Bad response: {:?}", response.status());
     } else {
       let bytes = response.bytes().await?;
-      verify_tarball(id, &bytes, &dist.shasum)?;
-      extract_tarball(&bytes, &package_folder)?;
-      Ok(package_folder)
+
+      match verify_and_extract_tarball(
+        id,
+        &bytes,
+        &dist.integrity,
+        &package_folder,
+      ) {
+        Ok(()) => Ok(package_folder),
+        Err(err) => {
+          if let Err(remove_err) = fs::remove_dir_all(&package_folder) {
+            if remove_err.kind() != std::io::ErrorKind::NotFound {
+              bail!(
+                concat!(
+                  "Failed verifying and extracting npm tarball for {}, then ",
+                  "failed cleaning up package cache folder.\n\nOriginal ",
+                  "error:\n\n{}\n\nRemove error:\n\n{}\n\nPlease manually ",
+                  "delete this folder or you will run into issues using this ",
+                  "package in the future:\n\n{}"
+                ),
+                id,
+                err,
+                remove_err,
+                package_folder.display(),
+              );
+            }
+          }
+          Err(err)
+        }
+      }
     }
   }
 

@@ -109,10 +109,20 @@ impl CliModuleLoader {
           media_type: *media_type,
         })
       }
-      _ => Err(anyhow!(
-        "Loading unprepared module: {}",
-        specifier.to_string()
-      )),
+      _ => {
+        if let Ok(file_path) = specifier.to_file_path() {
+          return Ok(ModuleCodeSource {
+            code: std::fs::read_to_string(file_path)?,
+            found_url: specifier.clone(),
+            media_type: MediaType::from(specifier),
+          });
+        }
+
+        Err(anyhow!(
+          "Loading unprepared module: {}",
+          specifier.to_string()
+        ))
+      }
     }
   }
 }
