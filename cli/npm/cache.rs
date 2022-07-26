@@ -80,7 +80,7 @@ impl NpmCache {
     }
   }
 
-  fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
+  pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
     self.location.join(&id.name).join(id.version.to_string())
   }
 }

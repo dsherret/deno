@@ -59,7 +59,7 @@ impl NpmPackageReference {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NpmPackageId {
   pub name: String,
   pub version: semver::Version,
@@ -72,20 +72,57 @@ impl std::fmt::Display for NpmPackageId {
 }
 
 #[derive(Debug)]
-pub struct NpmPackageResolution {
+pub struct NpmResolutionPackage {
   pub id: NpmPackageId,
   pub dist: NpmPackageVersionDistInfo,
-  // Any packages that need to be nested under this one
-  // because this does not resolve using the root packages.
-  pub sub_packages: Vec<NpmPackageResolution>,
+  pub dependencies: HashMap<String, NpmPackageId>,
+}
+
+pub struct NpmResolution {
+  top_level_packages: HashMap<String, NpmPackageId>,
+  packages: HashMap<NpmPackageId, NpmResolutionPackage>,
+}
+
+impl NpmResolution {
+  pub fn resolve_package(
+    &self,
+    name: &str,
+    referrer: Option<&NpmPackageId>,
+  ) -> Result<&NpmResolutionPackage, AnyError> {
+    if let Some(referrer) = referrer {
+      match self.packages.get(referrer) {
+        Some(referrer_package) => match referrer_package.dependencies.get(name)
+        {
+          Some(dep_id) => Ok(self.packages.get(dep_id).unwrap()),
+          None => {
+            bail!(
+              "could not find package '{}' referenced by '{}'",
+              name,
+              referrer
+            )
+          }
+        },
+        None => bail!("could not find referrer package '{}'", referrer),
+      }
+    } else {
+      match self.top_level_packages.get(name) {
+        Some(p) => Ok(self.packages.get(p).unwrap()),
+        None => bail!("could not find package '{}'", name),
+      }
+    }
+  }
+
+  pub fn all_packages(&self) -> impl Iterator<Item = &NpmResolutionPackage> {
+    self.packages.values()
+  }
 }
 
 pub async fn resolve_packages(
   packages: Vec<NpmPackageReference>,
   api: NpmRegistryApi,
-) -> Result<Vec<NpmPackageResolution>, AnyError> {
+) -> Result<NpmResolution, AnyError> {
   let context = Arc::new(Mutex::new(ResolutionContext::default()));
-  resolve_packages_inner(None, packages, api, context.clone()).await?;
+  npm_dependency_resolution(None, packages, api, context.clone()).await?;
   let context = context.lock();
   Ok(context.as_resolved())
 }
@@ -97,22 +134,65 @@ struct ResolutionContext {
 }
 
 impl ResolutionContext {
-  pub fn as_resolved(&self) -> Vec<NpmPackageResolution> {
-    let mut result = self
+  pub fn as_resolved(&self) -> NpmResolution {
+    let mut packages: HashMap<NpmPackageId, NpmResolutionPackage> =
+      Default::default();
+
+    self.populate_packages(&mut packages);
+    let top_level_packages = self
       .children
       .iter()
-      .map(|(package_name, child)| NpmPackageResolution {
-        dist: child.info.dist.clone(),
-        id: NpmPackageId {
-          name: package_name.clone(),
-          version: child.version.clone(),
-        },
-        sub_packages: child.context.lock().as_resolved(),
+      .map(|(package_name, child)| {
+        (
+          package_name.clone(),
+          NpmPackageId {
+            name: package_name.clone(),
+            version: child.version.clone(),
+          },
+        )
       })
-      .collect::<Vec<_>>();
-    // create some determinism downstream and sort by name
-    result.sort_by(|a, b| a.id.name.cmp(&b.id.name));
-    result
+      .collect();
+    NpmResolution {
+      top_level_packages,
+      packages,
+    }
+  }
+
+  fn populate_packages(
+    &self,
+    packages: &mut HashMap<NpmPackageId, NpmResolutionPackage>,
+  ) {
+    for (package_name, child) in self.children.iter() {
+      let id = NpmPackageId {
+        name: package_name.clone(),
+        version: child.version.clone(),
+      };
+      if !packages.contains_key(&id) {
+        let child_context = child.context.lock();
+        let dependencies = child_context
+          .children
+          .iter()
+          .map(|(package_name, child)| {
+            (
+              package_name.clone(),
+              NpmPackageId {
+                name: package_name.clone(),
+                version: child.version.clone(),
+              },
+            )
+          })
+          .collect::<HashMap<_, _>>();
+        packages.insert(
+          id.clone(),
+          NpmResolutionPackage {
+            dependencies,
+            dist: child.info.dist.clone(),
+            id: id,
+          },
+        );
+        child_context.populate_packages(packages);
+      }
+    }
   }
 }
 
@@ -128,9 +208,10 @@ struct VersionAndInfo {
   info: NpmPackageVersionInfo,
 }
 
-// npm dependency resolution: https://npm.github.io/npm-like-im-5/npm3/dependency-resolution.html
-
-fn resolve_packages_inner(
+/// Resolves dependencies according to:
+/// https://npm.github.io/npm-like-im-5/npm3/dependency-resolution.html
+/// We use the result of this a little differently.
+fn npm_dependency_resolution(
   parent: Option<NpmPackageId>,
   mut packages: Vec<NpmPackageReference>,
   api: NpmRegistryApi,
@@ -242,7 +323,7 @@ fn resolve_packages_inner(
             })
           })
           .collect::<Result<Vec<_>, AnyError>>()?;
-        resolve_packages_inner(
+        npm_dependency_resolution(
           Some(id),
           sub_packages,
           api.clone(),
