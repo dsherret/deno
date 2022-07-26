@@ -444,8 +444,8 @@ impl ProcState {
     };
 
     if !npm_package_references.is_empty() {
-      let npm_cache = npm::NpmCache::new(self.dir.root.join("npm"));
-      npm::npm_install(npm_package_references, npm_cache).await?;
+      npm::npm_install(npm_package_references, self.dir.root.join("npm"))
+        .await?;
     }
 
     // type check if necessary
