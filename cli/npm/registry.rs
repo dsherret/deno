@@ -22,29 +22,51 @@ pub struct NpmPackageInfo {
   pub versions: HashMap<String, NpmPackageVersionInfo>,
 }
 
+pub struct NpmDependencyEntry {
+  pub bare_specifier: String,
+  pub reference: NpmPackageReference,
+}
+
 #[derive(Deserialize, Clone)]
 pub struct NpmPackageVersionInfo {
   pub version: String,
   pub dist: NpmPackageVersionDistInfo,
-  // Package name to version.
+  // Bare specifier to version (ex. `"typescript": "^3.0.1") or possibly
+  // package and version (ex. `"typescript-3.0.1": "npm:typescript@3.0.1"`).
   #[serde(default)]
-  pub dependencies: HashMap<String, String>,
+  pub dependencies: Vec<(String, String)>,
 }
 
 impl NpmPackageVersionInfo {
   pub fn dependencies_as_references(
     &self,
-  ) -> Result<Vec<NpmPackageReference>, AnyError> {
+  ) -> Result<Vec<NpmDependencyEntry>, AnyError> {
+    fn entry_as_bare_specifier_and_reference(
+      entry: &(String, String),
+    ) -> Result<NpmDependencyEntry, AnyError> {
+      let bare_specifier = entry.0.clone();
+      let (name, version_req) =
+        if let Some(package_and_version) = entry.1.strip_prefix("npm:") {
+          if let Some((name, version)) = package_and_version.rsplit_once('@') {
+            (name.to_string(), version.to_string())
+          } else {
+            bail!("could not find @ symbol in npm scheme url '{}'", entry.1);
+          }
+        } else {
+          (entry.0.clone(), entry.1.clone())
+        };
+      let version_req = semver::VersionReq::parse(&version_req)
+        .with_context(|| format!("Dependency: {}", bare_specifier))?;
+      Ok(NpmDependencyEntry {
+        bare_specifier,
+        reference: NpmPackageReference { name, version_req },
+      })
+    }
+
     self
       .dependencies
       .iter()
-      .map(|(package_name, version_req)| {
-        Ok(NpmPackageReference {
-          name: package_name.to_string(),
-          version_req: semver::VersionReq::parse(&version_req)
-            .with_context(|| format!("Dependency: {}", package_name))?,
-        })
-      })
+      .map(|entry| entry_as_bare_specifier_and_reference(entry))
       .collect::<Result<Vec<_>, AnyError>>()
   }
 }

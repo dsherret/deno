@@ -80,7 +80,9 @@ impl std::fmt::Display for NpmPackageId {
 pub struct NpmResolutionPackage {
   pub id: NpmPackageId,
   pub dist: NpmPackageVersionDistInfo,
-  pub dependencies: HashMap<String, semver::Version>,
+  /// Key is what the package refers to the other package as,
+  /// which could be different from the package name.
+  pub dependencies: HashMap<String, NpmPackageId>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -117,15 +119,7 @@ impl NpmResolutionSnapshot {
   ) -> Result<&NpmResolutionPackage, AnyError> {
     match self.packages.get(referrer) {
       Some(referrer_package) => match referrer_package.dependencies.get(name) {
-        Some(version) => Ok(
-          self
-            .packages
-            .get(&NpmPackageId {
-              name: name.to_string(),
-              version: version.clone(),
-            })
-            .unwrap(),
-        ),
+        Some(id) => Ok(self.packages.get(id).unwrap()),
         None => {
           bail!(
             "could not find package '{}' referenced by '{}'",
@@ -188,25 +182,19 @@ impl NpmResolution {
 
     // only allow one thread in here at a time
     let _permit = self.update_sempahore.acquire().await.unwrap();
-    let mut current_resolution = self.snapshot.read().clone();
+    let mut snapshot = self.snapshot.read().clone();
     let mut pending_dependencies = VecDeque::new();
 
     // go over the top level packages first
     for package_ref in packages {
-      if current_resolution
-        .package_references
-        .contains_key(&package_ref)
-      {
+      if snapshot.package_references.contains_key(&package_ref) {
         // skip analyzing this package, as there's already a matching top level package
         continue;
       }
       // inspect the list of current packages
-      if let Some(version) =
-        current_resolution.resolve_best_package_version(&package_ref)
+      if let Some(version) = snapshot.resolve_best_package_version(&package_ref)
       {
-        current_resolution
-          .package_references
-          .insert(package_ref, version);
+        snapshot.package_references.insert(package_ref, version);
         continue; // done, no need to continue
       }
 
@@ -226,7 +214,7 @@ impl NpmResolution {
         version: version_and_info.version.clone(),
       };
       pending_dependencies.push_back((id.clone(), dependencies));
-      current_resolution.packages.insert(
+      snapshot.packages.insert(
         id.clone(),
         NpmResolutionPackage {
           id,
@@ -234,12 +222,12 @@ impl NpmResolution {
           dependencies: Default::default(),
         },
       );
-      current_resolution
+      snapshot
         .packages_by_name
         .entry(package_ref.name.clone())
         .or_default()
         .push(version_and_info.version.clone());
-      current_resolution
+      snapshot
         .package_references
         .insert(package_ref, version_and_info.version);
     }
@@ -249,60 +237,67 @@ impl NpmResolution {
       pending_dependencies.pop_front()
     {
       // sort the dependencies alphabetically
-      deps.sort_by(|a, b| a.name.cmp(&b.name));
+      // todo(dsherret): should this be sorted by package name & descending (ascending?) version or bare specifier?
+      deps.sort_by(|a, b| a.bare_specifier.cmp(&b.bare_specifier));
 
       // now resolve them
       for dep in deps {
         // check if an existing dependency matches this
-        let version = if let Some(version) =
-          current_resolution.resolve_best_package_version(&dep)
+        let id = if let Some(version) =
+          snapshot.resolve_best_package_version(&dep.reference)
         {
-          version
+          NpmPackageId {
+            name: dep.reference.name.clone(),
+            version,
+          }
         } else {
           // get the information
-          let info = self.api.package_info(&dep.name).await?;
+          let info = self.api.package_info(&dep.reference.name).await?;
           let version_and_info =
-            get_resolved_package_version_and_info(&dep, info, None)?;
+            get_resolved_package_version_and_info(&dep.reference, info, None)?;
           let dependencies = version_and_info
             .info
             .dependencies_as_references()
             .with_context(|| {
-              format!("Package: {}@{}", dep.name, version_and_info.version)
+              format!(
+                "Package: {}@{}",
+                dep.reference.name, version_and_info.version
+              )
             })?;
 
           let id = NpmPackageId {
-            name: dep.name.clone(),
+            name: dep.reference.name.clone(),
             version: version_and_info.version.clone(),
           };
           pending_dependencies.push_back((id.clone(), dependencies));
-          current_resolution.packages.insert(
+          snapshot.packages.insert(
             id.clone(),
             NpmResolutionPackage {
-              id,
+              id: id.clone(),
               dist: version_and_info.info.dist,
               dependencies: Default::default(),
             },
           );
-          current_resolution
+          snapshot
             .packages_by_name
-            .entry(dep.name.clone())
+            .entry(dep.reference.name.clone())
             .or_default()
-            .push(version_and_info.version.clone());
+            .push(id.version.clone());
 
-          version_and_info.version
+          id
         };
 
         // add this version as a dependency of the package
-        current_resolution
+        snapshot
           .packages
           .get_mut(&parent_package_id)
           .unwrap()
           .dependencies
-          .insert(dep.name.clone(), version);
+          .insert(dep.bare_specifier.clone(), id);
       }
     }
 
-    *self.snapshot.write() = current_resolution;
+    *self.snapshot.write() = snapshot;
     Ok(())
   }
 
