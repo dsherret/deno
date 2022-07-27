@@ -6,7 +6,6 @@ use crate::errors::get_error_class_name;
 use crate::npm::NpmPackageReference;
 
 use deno_ast::ParsedSource;
-use deno_core::anyhow::bail;
 use deno_core::error::custom_error;
 use deno_core::error::AnyError;
 use deno_core::ModuleSpecifier;
@@ -62,7 +61,7 @@ pub enum ModuleEntry {
 #[derive(Debug, Default)]
 pub struct GraphData {
   modules: HashMap<ModuleSpecifier, ModuleEntry>,
-  npm_packages: HashMap<String, NpmPackageReference>,
+  npm_packages: HashSet<NpmPackageReference>,
   /// Map of first known referrer locations for each module. Used to enhance
   /// error messages.
   referrer_map: HashMap<ModuleSpecifier, Range>,
@@ -71,38 +70,17 @@ pub struct GraphData {
 }
 
 impl GraphData {
-  pub fn from_module_graph(graph: &ModuleGraph) -> Result<Self, AnyError> {
-    let mut graph_data = GraphData::default();
-    graph_data.add_graph(graph, false)?;
-    Ok(graph_data)
-  }
-
   /// Store data from `graph` into `self`.
-  pub fn add_graph(
-    &mut self,
-    graph: &ModuleGraph,
-    reload: bool,
-  ) -> Result<(), AnyError> {
+  pub fn add_graph(&mut self, graph: &ModuleGraph, reload: bool) {
     for (specifier, result) in graph.specifiers() {
       if !reload && self.modules.contains_key(&specifier) {
         continue;
       }
       if specifier.scheme() == "npm" {
-        let reference = NpmPackageReference::from_specifier(&specifier)?;
-        if let Some(past_reference) = self.npm_packages.get(&reference.name) {
-          // todo(dsherret): it would be better to compare if the version requirements
-          // are compatible and then select the best version requirement
-          if past_reference.version_req != reference.version_req {
-            bail!(
-              "Cannot use two different version requirements for npm package '{}': {} and {}",
-              reference.name,
-              past_reference.version_req,
-              reference.version_req,
-            );
-          }
-        } else {
-          self.npm_packages.insert(reference.name.clone(), reference);
-        }
+        // the loader enforces npm specifiers are valid, so it's ok to unwrap here
+        let reference =
+          NpmPackageReference::from_specifier(&specifier).unwrap();
+        self.npm_packages.insert(reference);
         continue;
       }
       if let Some(found) = graph.redirects.get(&specifier) {
@@ -194,7 +172,6 @@ impl GraphData {
         }
       }
     }
-    Ok(())
   }
 
   pub fn entries(
@@ -204,7 +181,7 @@ impl GraphData {
   }
 
   pub fn npm_package_references(&self) -> Vec<NpmPackageReference> {
-    self.npm_packages.values().cloned().collect()
+    self.npm_packages.iter().cloned().collect()
   }
 
   /// Walk dependencies from `roots` and return every encountered specifier.
@@ -505,13 +482,21 @@ impl GraphData {
   }
 }
 
+impl From<&ModuleGraph> for GraphData {
+  fn from(graph: &ModuleGraph) -> Self {
+    let mut graph_data = GraphData::default();
+    graph_data.add_graph(graph, false);
+    graph_data
+  }
+}
+
 /// Like `graph.valid()`, but enhanced with referrer info.
 pub fn graph_valid(
   graph: &ModuleGraph,
   follow_type_only: bool,
   check_js: bool,
 ) -> Result<(), AnyError> {
-  GraphData::from_module_graph(graph)?
+  GraphData::from(graph)
     .check(&graph.roots, follow_type_only, check_js)
     .unwrap()
 }

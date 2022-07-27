@@ -310,22 +310,24 @@ impl NpmResolution {
     &self,
     name: &str,
     referrer: &NpmPackageId,
-  ) -> Result<&NpmResolutionPackage, AnyError> {
+  ) -> Result<NpmResolutionPackage, AnyError> {
     self
       .snapshot
       .read()
       .resolve_package_from_package(name, referrer)
+      .cloned()
   }
 
   /// Resolve a node package from a deno module.
   pub fn resolve_package_from_deno_module(
     &self,
     reference: &NpmPackageReference,
-  ) -> Result<&NpmResolutionPackage, AnyError> {
+  ) -> Result<NpmResolutionPackage, AnyError> {
     self
       .snapshot
       .read()
       .resolve_package_from_deno_module(reference)
+      .cloned()
   }
 
   pub fn all_packages(&self) -> Vec<NpmResolutionPackage> {
