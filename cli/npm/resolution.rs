@@ -10,6 +10,7 @@ use deno_core::error::AnyError;
 use deno_core::futures::future::BoxFuture;
 use deno_core::futures::FutureExt;
 use deno_core::parking_lot::Mutex;
+use deno_core::parking_lot::RwLock;
 
 use super::registry::NpmPackageVersionDistInfo;
 use super::registry::NpmPackageVersionInfo;
@@ -59,6 +60,12 @@ impl NpmPackageReference {
   }
 }
 
+impl std::fmt::Display for NpmPackageReference {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}@{}", self.name, self.version_req)
+  }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NpmPackageId {
   pub name: String,
@@ -71,19 +78,19 @@ impl std::fmt::Display for NpmPackageId {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NpmResolutionPackage {
   pub id: NpmPackageId,
   pub dist: NpmPackageVersionDistInfo,
   pub dependencies: HashMap<String, NpmPackageId>,
 }
 
-pub struct NpmResolution {
+struct StoredNpmResolution {
   top_level_packages: HashMap<String, NpmPackageId>,
   packages: HashMap<NpmPackageId, NpmResolutionPackage>,
 }
 
-impl NpmResolution {
+impl StoredNpmResolution {
   pub fn resolve_package(
     &self,
     name: &str,
@@ -112,29 +119,59 @@ impl NpmResolution {
     }
   }
 
-  pub fn all_packages(&self) -> impl Iterator<Item = &NpmResolutionPackage> {
-    self.packages.values()
+  pub fn all_packages(&self) -> Vec<NpmResolutionPackage> {
+    self.packages.values().cloned().collect()
   }
 }
 
-pub async fn resolve_packages(
-  packages: Vec<NpmPackageReference>,
+pub struct NpmResolution {
   api: NpmRegistryApi,
-) -> Result<NpmResolution, AnyError> {
-  let context = Arc::new(Mutex::new(ResolutionContext::default()));
-  npm_dependency_resolution(None, packages, api, context.clone()).await?;
-  let context = context.lock();
-  Ok(context.as_resolved())
+  stored: RwLock<StoredNpmResolution>,
+  context: tokio::sync::Mutex<ResolutionContext>,
 }
 
-#[derive(Default)]
-struct ResolutionContext {
-  parent: Option<Arc<Mutex<ResolutionContext>>>,
-  children: HashMap<String, ContextChild>,
+impl NpmResolution {
+  pub async fn add_packages(
+    &self,
+    mut packages: Vec<NpmPackageReference>,
+  ) -> Result<(), AnyError> {
+    // multiple packages are resolved on alphabetical order
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+    let context = self.context.lock().await;
+    for package in packages {
+      context.add_package(package, self.api.clone()).await?;
+    }
+    *self.stored.write() = context.as_stored();
+    Ok(())
+  }
+
+  pub fn resolve_package(
+    &self,
+    name: &str,
+    referrer: Option<&NpmPackageId>,
+  ) -> Result<&NpmResolutionPackage, AnyError> {
+    self.stored.read().resolve_package(name, referrer)
+  }
+
+  pub fn all_packages(&self) -> Vec<NpmResolutionPackage> {
+    self.stored.read().all_packages()
+  }
+}
+
+#[derive(Clone)]
+struct VersionAndInfo {
+  version: semver::Version,
+  info: NpmPackageVersionInfo,
+}
+
+#[derive(Clone)]
+enum ResolutionContext {
+  Root(Arc<RootContext>),
+  Package(Arc<PackageContext>),
 }
 
 impl ResolutionContext {
-  pub fn as_resolved(&self) -> NpmResolution {
+  pub fn as_stored(&self) -> StoredNpmResolution {
     let mut packages: HashMap<NpmPackageId, NpmResolutionPackage> =
       Default::default();
 
@@ -152,7 +189,7 @@ impl ResolutionContext {
         )
       })
       .collect();
-    NpmResolution {
+    StoredNpmResolution {
       top_level_packages,
       packages,
     }
@@ -194,146 +231,217 @@ impl ResolutionContext {
       }
     }
   }
-}
 
-struct ContextChild {
-  version: semver::Version,
-  info: NpmPackageVersionInfo,
-  context: Arc<Mutex<ResolutionContext>>,
-}
+  pub fn into_package_context(self) -> Option<Arc<PackageContext>> {
+    match self {
+      ResolutionContext::Package(c) => Some(c),
+      _ => None,
+    }
+  }
 
-#[derive(Clone)]
-struct VersionAndInfo {
-  version: semver::Version,
-  info: NpmPackageVersionInfo,
-}
+  pub fn parent(&self) -> Option<ResolutionContext> {
+    match self {
+      ResolutionContext::Root(_) => None,
+      ResolutionContext::Package(p) => Some(p.parent.clone()),
+    }
+  }
 
-/// Resolves dependencies according to:
-/// https://npm.github.io/npm-like-im-5/npm3/dependency-resolution.html
-/// We use the result of this a little differently.
-fn npm_dependency_resolution(
-  parent: Option<NpmPackageId>,
-  mut packages: Vec<NpmPackageReference>,
-  api: NpmRegistryApi,
-  context: Arc<Mutex<ResolutionContext>>,
-) -> BoxFuture<'static, Result<(), AnyError>> {
-  // boxed due to async recursion
-  async move {
-    // need to resolve alphabetically, so sort
-    packages.sort_by(|a, b| a.name.cmp(&b.name));
-
-    for package in packages {
-      let original_context = context.clone();
-      let mut current_context_cell = original_context.clone();
-
-      let (maybe_ancestor_version, insert_context) = loop {
-        let (maybe_parent, maybe_child_version) = {
-          let current_context = current_context_cell.lock();
-          (
-            current_context.parent.clone(),
-            current_context
-              .children
-              .get(&package.name)
-              .map(|c| c.version.clone()),
-          )
-        };
-        if let Some(child_version) = maybe_child_version {
-          if package.version_req.matches(&child_version) {
-            // re-use this dependency
-            break (Some(child_version), current_context_cell);
-          } else {
-            // insert in the current child context
-            break (None, current_context_cell);
-          }
-        }
-        if let Some(parent) = maybe_parent {
-          current_context_cell = parent;
-        } else {
-          // not found, insert in the root context, which is
-          // the current context
-          break (None, current_context_cell);
-        }
-      };
-
-      // not found, so get the package info and insert
-      if maybe_ancestor_version.is_none() {
-        let info = api.package_info(&package.name).await?;
-        let mut maybe_best_version: Option<VersionAndInfo> = None;
-        for (_, version_info) in info.versions.into_iter() {
-          let version = semver::Version::parse(&version_info.version)?;
-          if package.version_req.matches(&version) {
-            let is_best_version = maybe_best_version
-              .as_ref()
-              .map(|best_version| best_version.version.cmp(&version).is_lt())
-              .unwrap_or(true);
-            if is_best_version {
-              maybe_best_version = Some(VersionAndInfo {
-                version,
-                info: version_info,
-              });
-            }
-          }
-        }
-        let package_version = match maybe_best_version {
-          Some(v) => v,
-          None => bail!(
-            "could not package '{}' matching '{}'{}",
-            package.name,
-            package.version_req,
-            match parent {
-              Some(id) => format!(" as specified in {}", id),
-              None => String::new(),
-            }
-          ),
-        };
-
-        let child_context = Arc::new(Mutex::new(ResolutionContext {
-          parent: Some(original_context.clone()),
-          children: Default::default(),
-        }));
-        insert_context.lock().children.insert(
-          package.name.clone(),
-          ContextChild {
-            version: package_version.version.clone(),
-            info: package_version.info.clone(),
-            context: child_context.clone(),
-          },
-        );
-
-        // now go analyze this child package
-        let id = NpmPackageId {
-          name: package.name,
-          version: package_version.version,
-        };
-
-        let sub_packages = package_version
-          .info
-          .dependencies
-          .into_iter()
-          .map(|(package_name, version_req)| {
-            Ok(NpmPackageReference {
-              name: package_name.to_string(),
-              version_req: semver::VersionReq::parse(&version_req)
-                .with_context(|| {
-                  format!(
-                    "Error parsing version requirement for {} in {}",
-                    package_name, id
-                  )
-                })?,
-            })
-          })
-          .collect::<Result<Vec<_>, AnyError>>()?;
-        npm_dependency_resolution(
-          Some(id),
-          sub_packages,
-          api.clone(),
-          child_context,
-        )
-        .await?;
+  pub fn insert_child(
+    &self,
+    package_name: String,
+    context: Arc<PackageContext>,
+  ) {
+    match self {
+      ResolutionContext::Root(c) => {
+        c.children.lock().insert(package_name, context);
+      }
+      ResolutionContext::Package(c) => {
+        &c.deps.lock().children.insert(package_name, context);
       }
     }
-
-    Ok(())
   }
-  .boxed()
+
+  pub fn get_dependency_version(
+    &self,
+    package: &NpmPackageReference,
+  ) -> Option<semver::Version> {
+    match self {
+      ResolutionContext::Root(c) => c
+        .children
+        .lock()
+        .get(&package.name)
+        .map(|c| c.version.clone()),
+      ResolutionContext::Package(c) => {
+        let deps = c.deps.lock();
+        deps
+          .children
+          .get(&package.name)
+          .map(|c| c.version.clone())
+          .or_else(|| {
+            deps.non_children_dependencies.get(&package.name).cloned()
+          })
+      }
+    }
+  }
+
+  pub fn add_package(
+    &self,
+    package: NpmPackageReference,
+    api: NpmRegistryApi,
+  ) -> BoxFuture<'static, Result<(), AnyError>> {
+    let context = self.clone();
+    async move {
+      match resolve(context, &package)? {
+        ResolveAction::None => {
+          // do nothing, it's already existing
+        }
+        ResolveAction::InsertNonChild(package_context, version) => {
+          package_context
+            .deps
+            .lock()
+            .non_children_dependencies
+            .insert(package.name.clone(), version);
+        }
+        ResolveAction::InsertChild(insert_context) => {
+          let info = api.package_info(&package.name).await?;
+          let version_and_info =
+            get_resolved_package_version_and_info(&package, info, None)?;
+          let mut dependencies = version_and_info
+            .info
+            .dependencies_as_references()
+            .with_context(|| {
+              format!("Package: {}@{}", package.name, version_and_info.version)
+            })?;
+          let child_context = Arc::new(PackageContext {
+            parent: insert_context.clone(),
+            info: version_and_info.info,
+            version: version_and_info.version.clone(),
+            deps: Mutex::new(PackageContextDependencies {
+              children: Default::default(),
+              non_children_dependencies: Default::default(),
+            }),
+          });
+          insert_context
+            .insert_child(package.name.clone(), child_context.clone());
+
+          // iterate over the dependencies in alphabetical order
+          dependencies.sort_by(|a, b| a.name.cmp(&b.name));
+          let child_context = ResolutionContext::Package(child_context);
+          for dep in dependencies {
+            child_context.add_package(dep, api.clone()).await?;
+          }
+        }
+      }
+
+      Ok(())
+    }
+    .boxed()
+  }
+}
+
+struct RootContext {
+  children: Mutex<HashMap<String, Arc<PackageContext>>>,
+  all_: Mutex<HashMap<String, Arc<PackageContext>>>,
+}
+
+#[derive(Default)]
+struct RootContextInner {
+  children: HashMap<String, Arc<PackageContext>>,
+  all_packages: HashMap<String, Vec<semver::Version>>,
+}
+
+struct PackageContext {
+  parent: ResolutionContext,
+  version: semver::Version,
+  info: NpmPackageVersionInfo,
+  deps: Mutex<PackageContextDependencies>,
+}
+
+struct PackageContextDependencies {
+  children: HashMap<String, Arc<PackageContext>>,
+  non_children_dependencies: HashMap<String, semver::Version>,
+}
+
+enum ResolveAction {
+  /// Package already exists in the current context.
+  None,
+  /// A version was found found in an ancestor, so insert
+  /// a non-child version into the current context.
+  InsertNonChild(Arc<PackageContext>, semver::Version),
+  /// A conflicting version was found in an ancestor.
+  /// Insert into the specified context.
+  InsertChild(ResolutionContext),
+}
+
+fn resolve(
+  context: ResolutionContext,
+  package: &NpmPackageReference,
+) -> Result<ResolveAction, AnyError> {
+  let mut last_parent = None;
+  let mut next_context = Some(context);
+  while let Some(current) = next_context {
+    if let Some(dep_version) = current.get_dependency_version(&package) {
+      if package.version_req.matches(&dep_version) {
+        if last_parent.is_none() {
+          return Ok(ResolveAction::None);
+        } else {
+          return Ok(ResolveAction::InsertNonChild(
+            current.into_package_context().unwrap(),
+            dep_version,
+          ));
+        }
+      } else {
+        if last_parent.is_none() {
+          bail!(
+            "cannot import {} because it's not compatible with previous resolved version {}",
+            package,
+            dep_version,
+          );
+        }
+        return Ok(ResolveAction::InsertChild(current));
+      }
+    }
+    next_context = current.parent();
+    last_parent = Some(current);
+  }
+
+  // insert in the root
+  let root_context = last_parent.unwrap();
+  Ok(ResolveAction::InsertChild(root_context))
+}
+
+fn get_resolved_package_version_and_info(
+  package: &NpmPackageReference,
+  info: NpmPackageInfo,
+  parent: Option<&NpmPackageId>,
+) -> Result<VersionAndInfo, AnyError> {
+  let mut maybe_best_version: Option<VersionAndInfo> = None;
+  for (_, version_info) in info.versions.into_iter() {
+    let version = semver::Version::parse(&version_info.version)?;
+    if package.version_req.matches(&version) {
+      let is_best_version = maybe_best_version
+        .as_ref()
+        .map(|best_version| best_version.version.cmp(&version).is_lt())
+        .unwrap_or(true);
+      if is_best_version {
+        maybe_best_version = Some(VersionAndInfo {
+          version,
+          info: version_info,
+        });
+      }
+    }
+  }
+
+  match maybe_best_version {
+    Some(v) => Ok(v),
+    None => bail!(
+      "could not package '{}' matching '{}'{}",
+      package.name,
+      package.version_req,
+      match parent {
+        Some(id) => format!(" as specified in {}", id),
+        None => String::new(),
+      }
+    ),
+  }
 }

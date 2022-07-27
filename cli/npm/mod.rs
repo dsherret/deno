@@ -3,6 +3,7 @@
 mod cache;
 mod registry;
 mod resolution;
+mod resolution_builder;
 mod tarball;
 
 use std::path::Path;
@@ -17,11 +18,11 @@ use cache::NpmCache;
 use registry::NpmPackageVersionDistInfo;
 use registry::NpmRegistryApi;
 use resolution::resolve_packages;
-use resolution::NpmResolution;
+use resolution::StoredNpmResolution;
 
 pub struct NpmDependencyResolver {
   cache: NpmCache,
-  resolution: NpmResolution,
+  resolution: StoredNpmResolution,
 }
 
 impl NpmDependencyResolver {

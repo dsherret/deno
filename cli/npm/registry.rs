@@ -12,6 +12,8 @@ use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_runtime::deno_fetch::reqwest;
 
+use super::NpmPackageReference;
+
 // npm registry docs: https://github.com/npm/registry/blob/master/docs/REGISTRY-API.md
 
 #[derive(Deserialize, Clone)]
@@ -27,6 +29,24 @@ pub struct NpmPackageVersionInfo {
   // Package name to version.
   #[serde(default)]
   pub dependencies: HashMap<String, String>,
+}
+
+impl NpmPackageVersionInfo {
+  pub fn dependencies_as_references(
+    &self,
+  ) -> Result<Vec<NpmPackageReference>, AnyError> {
+    self
+      .dependencies
+      .iter()
+      .map(|(package_name, version_req)| {
+        Ok(NpmPackageReference {
+          name: package_name.to_string(),
+          version_req: semver::VersionReq::parse(&version_req)
+            .with_context(|| format!("Dependency: {}", package_name))?,
+        })
+      })
+      .collect::<Result<Vec<_>, AnyError>>()
+  }
 }
 
 #[derive(Debug, Deserialize, Clone)]
