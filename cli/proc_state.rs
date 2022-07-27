@@ -24,6 +24,7 @@ use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
 use crate::npm;
+use crate::npm::NpmDependencyResolver;
 use crate::npm::NpmPackageReference;
 use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
@@ -84,6 +85,7 @@ pub struct Inner {
   pub compiled_wasm_module_store: CompiledWasmModuleStore,
   maybe_resolver: Option<Arc<dyn deno_graph::source::Resolver + Send + Sync>>,
   maybe_file_watcher_reporter: Option<FileWatcherReporter>,
+  npm_resolver: NpmDependencyResolver,
 }
 
 impl Deref for ProcState {
@@ -220,6 +222,7 @@ impl ProcState {
       warn!("{}", ignored_options);
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
+    let npm_resolver = NpmDependencyResolver::new(dir.root.join("npm"));
 
     Ok(ProcState(Arc::new(Inner {
       dir,
@@ -243,6 +246,7 @@ impl ProcState {
       compiled_wasm_module_store,
       maybe_resolver,
       maybe_file_watcher_reporter,
+      npm_resolver,
     })))
   }
 
@@ -444,7 +448,9 @@ impl ProcState {
     };
 
     if !npm_package_references.is_empty() {
-      npm::npm_install(npm_package_references, self.dir.root.join("npm"))
+      self
+        .npm_resolver
+        .add_package_references(npm_package_references)
         .await?;
     }
 

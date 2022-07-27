@@ -3,10 +3,8 @@
 mod cache;
 mod registry;
 mod resolution;
-mod resolution_builder;
 mod tarball;
 
-use std::path::Path;
 use std::path::PathBuf;
 
 use deno_core::error::AnyError;
@@ -17,37 +15,56 @@ pub use resolution::NpmPackageReference;
 use cache::NpmCache;
 use registry::NpmPackageVersionDistInfo;
 use registry::NpmRegistryApi;
-use resolution::resolve_packages;
-use resolution::StoredNpmResolution;
+use resolution::NpmResolution;
 
 pub struct NpmDependencyResolver {
   cache: NpmCache,
-  resolution: StoredNpmResolution,
+  resolution: NpmResolution,
 }
 
 impl NpmDependencyResolver {
-  pub fn resolve_package(
+  pub fn new(root_cache_dir: PathBuf) -> Self {
+    let cache = NpmCache::new(root_cache_dir);
+    let api = NpmRegistryApi::default();
+    let resolution = NpmResolution::new(api);
+
+    Self { cache, resolution }
+  }
+
+  pub async fn add_package_references(
+    &self,
+    references: Vec<NpmPackageReference>,
+  ) -> Result<(), AnyError> {
+    self.resolution.add_package_references(references).await?;
+    // todo(dsherret): parallelize
+    for package in self.resolution.all_packages() {
+      self
+        .cache
+        .ensure_package(&package.id, &package.dist)
+        .await?;
+    }
+    Ok(())
+  }
+
+  /// Resolve a node package from a node package.
+  pub fn resolve_package_from_package(
     &self,
     name: &str,
-    referrer: Option<&NpmPackageId>,
+    referrer: &NpmPackageId,
   ) -> Result<PathBuf, AnyError> {
-    let package = self.resolution.resolve_package(name, referrer)?;
+    let package = self
+      .resolution
+      .resolve_package_from_package(name, referrer)?;
     Ok(self.cache.package_folder(&package.id))
   }
-}
 
-pub async fn npm_install(
-  references: Vec<NpmPackageReference>,
-  root_cache_dir: PathBuf,
-) -> Result<NpmDependencyResolver, AnyError> {
-  let cache = NpmCache::new(root_cache_dir);
-  let npm_registry_api = NpmRegistryApi::default();
-  let resolution = resolve_packages(references, npm_registry_api).await?;
-
-  // todo(dsherret): parallelize
-  for package in resolution.all_packages() {
-    cache.ensure_package(&package.id, &package.dist).await?;
+  pub fn resolve_package_from_deno_module(
+    &self,
+    reference: &NpmPackageReference,
+  ) -> Result<PathBuf, AnyError> {
+    let package = self
+      .resolution
+      .resolve_package_from_deno_module(reference)?;
+    Ok(self.cache.package_folder(&package.id))
   }
-
-  Ok(NpmDependencyResolver { cache, resolution })
 }
