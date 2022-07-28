@@ -85,8 +85,8 @@ pub struct Inner {
   pub compiled_wasm_module_store: CompiledWasmModuleStore,
   maybe_resolver: Option<Arc<dyn deno_graph::source::Resolver + Send + Sync>>,
   maybe_file_watcher_reporter: Option<FileWatcherReporter>,
-  npm_resolver: NpmPackageResolver,
-  cjs_resolutions: Mutex<HashSet<ModuleSpecifier>>,
+  pub npm_resolver: NpmPackageResolver,
+  pub cjs_resolutions: Mutex<HashSet<ModuleSpecifier>>,
 }
 
 impl Deref for ProcState {
@@ -536,7 +536,7 @@ impl ProcState {
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
       if self
         .npm_resolver
-        .get_package_from_referrer(&referrer)
+        .get_package_from_specifier(&referrer)
         .is_some()
       {
         // we're in an npm package, so use node resolution

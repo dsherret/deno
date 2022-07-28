@@ -1463,7 +1463,7 @@ fn package_resolve_new(
   }
 
   let referrer_package =
-    npm_resolver.get_package_from_referrer(referrer).unwrap();
+    npm_resolver.get_package_from_specifier(referrer).unwrap();
   let package = npm_resolver
     .resolve_package_from_package(&package_name, &referrer_package)?;
   let package_dir_path = npm_resolver.package_folder(&package);
@@ -1724,7 +1724,7 @@ fn get_package_scope_config_new(
   referrer: &ModuleSpecifier,
   npm_resolver: &NpmPackageResolver,
 ) -> Result<PackageConfig, AnyError> {
-  let npm_package = npm_resolver.get_package_from_referrer(&referrer).unwrap();
+  let npm_package = npm_resolver.get_package_from_specifier(&referrer).unwrap();
   let root_folder = npm_resolver.package_folder(&npm_package);
   let package_json_path = root_folder.join("./package.json");
 

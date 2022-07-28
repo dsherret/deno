@@ -109,21 +109,55 @@ impl CliModuleLoader {
           media_type: *media_type,
         })
       }
-      _ => {
-        if let Ok(file_path) = specifier.to_file_path() {
-          return Ok(ModuleCodeSource {
-            code: std::fs::read_to_string(file_path)?,
-            found_url: specifier.clone(),
-            media_type: MediaType::from(specifier),
-          });
-        }
-
-        Err(anyhow!(
-          "Loading unprepared module: {}",
-          specifier.to_string()
-        ))
-      }
+      _ => Err(anyhow!(
+        "Loading unprepared module: {}",
+        specifier.to_string()
+      )),
     }
+  }
+
+  fn load_sync(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Result<ModuleSource, AnyError> {
+    let code_source = if self
+      .ps
+      .npm_resolver
+      .get_package_from_specifier(specifier)
+      .is_some()
+    {
+      let file_path = specifier.to_file_path().unwrap();
+      let code = std::fs::read_to_string(file_path)?;
+      let is_cjs = self.ps.cjs_resolutions.lock().contains(specifier);
+
+      // todo: handle transforming cjs here and injecting globals for mjs
+
+      ModuleCodeSource {
+        code,
+        found_url: specifier.clone(),
+        media_type: MediaType::from(specifier),
+      }
+    } else {
+      self.load_prepared_module(specifier)?
+    };
+    let code = if self.ps.options.is_inspecting() {
+      // we need the code with the source map in order for
+      // it to work with --inspect or --inspect-brk
+      code_source.code
+    } else {
+      // reduce memory and throw away the source map
+      // because we don't need it
+      code_without_source_map(code_source.code)
+    };
+    Ok(ModuleSource {
+      code: code.into_bytes().into_boxed_slice(),
+      module_url_specified: specifier.to_string(),
+      module_url_found: code_source.found_url.to_string(),
+      module_type: match code_source.media_type {
+        MediaType::Json => ModuleType::Json,
+        _ => ModuleType::JavaScript,
+      },
+    })
   }
 }
 
@@ -146,28 +180,7 @@ impl ModuleLoader for CliModuleLoader {
     // NOTE: this block is async only because of `deno_core` interface
     // requirements; module was already loaded when constructing module graph
     // during call to `prepare_load` so we can load it synchronously.
-    let result = self.load_prepared_module(specifier).map(|code_source| {
-      let code = if self.ps.options.is_inspecting() {
-        // we need the code with the source map in order for
-        // it to work with --inspect or --inspect-brk
-        code_source.code
-      } else {
-        // reduce memory and throw away the source map
-        // because we don't need it
-        code_without_source_map(code_source.code)
-      };
-      ModuleSource {
-        code: code.into_bytes().into_boxed_slice(),
-        module_url_specified: specifier.to_string(),
-        module_url_found: code_source.found_url.to_string(),
-        module_type: match code_source.media_type {
-          MediaType::Json => ModuleType::Json,
-          _ => ModuleType::JavaScript,
-        },
-      }
-    });
-
-    Box::pin(deno_core::futures::future::ready(result))
+    Box::pin(deno_core::futures::future::ready(self.load_sync(specifier)))
   }
 
   fn prepare_load(

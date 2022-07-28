@@ -72,10 +72,10 @@ impl NpmPackageResolver {
     self.cache.package_folder(package)
   }
 
-  pub fn get_package_from_referrer(
+  pub fn get_package_from_specifier(
     &self,
-    referrer: &ModuleSpecifier,
+    specifier: &ModuleSpecifier,
   ) -> Option<NpmPackageId> {
-    self.cache.get_package_from_referrer(referrer)
+    self.cache.get_package_from_specifier(specifier)
   }
 }

@@ -98,11 +98,11 @@ impl NpmCache {
     dir.join(id.version.to_string()).join("package")
   }
 
-  pub fn get_package_from_referrer(
+  pub fn get_package_from_specifier(
     &self,
-    referrer: &ModuleSpecifier,
+    specifier: &ModuleSpecifier,
   ) -> Option<NpmPackageId> {
-    let relative_url = self.root_dir_url.make_relative(referrer)?;
+    let relative_url = self.root_dir_url.make_relative(specifier)?;
     if relative_url.starts_with("../") {
       return None;
     }
