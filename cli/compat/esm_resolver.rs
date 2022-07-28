@@ -78,7 +78,7 @@ static DEFAULT_CONDITIONS: &[&str] = &["deno", "node", "import"];
 
 /// This function is an implementation of `defaultResolve` in
 /// `lib/internal/modules/esm/resolve.js` from Node.
-pub fn node_resolve(
+fn node_resolve(
   specifier: &str,
   referrer: &str,
   cwd: &std::path::Path,
@@ -882,6 +882,40 @@ fn package_resolve(
     &to_file_path_string(base),
     "package",
   ))
+}
+
+// todo(dsherret): this is an extraction out from package_resolve
+// but we should eventually remove the other code and clean this up.
+pub fn package_config_resolve_new(
+  package_subpath: &str,
+  package_dir: &PathBuf,
+) -> Result<ModuleSpecifier, AnyError> {
+  let package_json_path = package_dir.join("package.json");
+  // todo(dsherret): remove base from this code
+  let base =
+    ModuleSpecifier::from_directory_path(package_json_path.parent().unwrap())
+      .unwrap();
+  // todo(THIS PR): remove specifier
+  let package_config =
+    get_package_config(package_json_path.clone(), "<REMOVE_ME>", None)?;
+  let package_json_url =
+    ModuleSpecifier::from_file_path(&package_json_path).unwrap();
+  if package_config.exports.is_some() {
+    return package_exports_resolve(
+      package_json_url,
+      package_subpath.to_string(),
+      package_config,
+      &base,
+      DEFAULT_CONDITIONS,
+    );
+  }
+  if package_subpath == "." {
+    return legacy_main_resolve(&package_json_url, &package_config, &base);
+  }
+
+  return package_json_url
+    .join(&package_subpath)
+    .map_err(AnyError::from);
 }
 
 fn parse_package_name(

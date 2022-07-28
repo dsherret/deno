@@ -12,7 +12,7 @@ use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_runtime::deno_fetch::reqwest;
 
-use super::NpmPackageReference;
+use super::resolution::NpmPackageReq;
 
 // npm registry docs: https://github.com/npm/registry/blob/master/docs/REGISTRY-API.md
 
@@ -24,7 +24,7 @@ pub struct NpmPackageInfo {
 
 pub struct NpmDependencyEntry {
   pub bare_specifier: String,
-  pub reference: NpmPackageReference,
+  pub req: NpmPackageReq,
 }
 
 #[derive(Deserialize, Clone)]
@@ -34,7 +34,7 @@ pub struct NpmPackageVersionInfo {
   // Bare specifier to version (ex. `"typescript": "^3.0.1") or possibly
   // package and version (ex. `"typescript-3.0.1": "npm:typescript@3.0.1"`).
   #[serde(default)]
-  pub dependencies: Vec<(String, String)>,
+  pub dependencies: HashMap<String, String>,
 }
 
 impl NpmPackageVersionInfo {
@@ -42,7 +42,7 @@ impl NpmPackageVersionInfo {
     &self,
   ) -> Result<Vec<NpmDependencyEntry>, AnyError> {
     fn entry_as_bare_specifier_and_reference(
-      entry: &(String, String),
+      entry: (&String, &String),
     ) -> Result<NpmDependencyEntry, AnyError> {
       let bare_specifier = entry.0.clone();
       let (name, version_req) =
@@ -59,7 +59,7 @@ impl NpmPackageVersionInfo {
         .with_context(|| format!("Dependency: {}", bare_specifier))?;
       Ok(NpmDependencyEntry {
         bare_specifier,
-        reference: NpmPackageReference { name, version_req },
+        req: NpmPackageReq { name, version_req },
       })
     }
 

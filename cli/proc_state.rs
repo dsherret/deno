@@ -9,7 +9,6 @@ use crate::cache::EmitCache;
 use crate::cache::FastInsecureHasher;
 use crate::cache::TypeCheckCache;
 use crate::compat;
-use crate::compat::node_resolve;
 use crate::compat::NodeEsmResolver;
 use crate::deno_dir;
 use crate::emit;
@@ -444,13 +443,13 @@ impl ProcState {
           check_js,
         )
         .unwrap()?;
-      graph_data.npm_package_references()
+      graph_data.npm_package_reqs()
     };
 
     if !npm_package_references.is_empty() {
       self
         .npm_resolver
-        .add_package_references(npm_package_references)
+        .add_package_reqs(npm_package_references)
         .await?;
     }
 
@@ -500,15 +499,21 @@ impl ProcState {
     specifier: &str,
     referrer: &str,
   ) -> Result<ModuleSpecifier, AnyError> {
+    eprintln!("REFERRER: {} ({})", referrer, specifier);
     // handle npm:<package-name>@<version> specifiers
     if let Ok(reference) = NpmPackageReference::from_str(&specifier) {
-      let current_dir = std::env::current_dir()?;
-      // todo(dsherret): needs to take version into consideration
-      return node_resolve(&reference.name, referrer, &current_dir)?
-        .to_result();
+      let package_dir = self
+        .npm_resolver
+        .resolve_package_from_deno_module(&reference.req)?;
+      return compat::package_config_resolve_new(
+        reference.sub_path.as_deref().unwrap_or("."),
+        &package_dir,
+      );
     }
 
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
+      //if (refe)
+
       let graph_data = self.graph_data.read();
       let found_referrer = graph_data.follow_redirect(&referrer);
       let maybe_resolved = match graph_data.get(&found_referrer) {

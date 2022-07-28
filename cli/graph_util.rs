@@ -4,6 +4,7 @@ use crate::colors;
 use crate::emit::TsTypeLib;
 use crate::errors::get_error_class_name;
 use crate::npm::NpmPackageReference;
+use crate::npm::NpmPackageReq;
 
 use deno_ast::ParsedSource;
 use deno_core::error::custom_error;
@@ -61,7 +62,7 @@ pub enum ModuleEntry {
 #[derive(Debug, Default)]
 pub struct GraphData {
   modules: HashMap<ModuleSpecifier, ModuleEntry>,
-  npm_packages: HashSet<NpmPackageReference>,
+  npm_packages: HashSet<NpmPackageReq>,
   /// Map of first known referrer locations for each module. Used to enhance
   /// error messages.
   referrer_map: HashMap<ModuleSpecifier, Range>,
@@ -80,7 +81,7 @@ impl GraphData {
         // the loader enforces npm specifiers are valid, so it's ok to unwrap here
         let reference =
           NpmPackageReference::from_specifier(&specifier).unwrap();
-        self.npm_packages.insert(reference);
+        self.npm_packages.insert(reference.req);
         continue;
       }
       if let Some(found) = graph.redirects.get(&specifier) {
@@ -180,7 +181,7 @@ impl GraphData {
     self.modules.iter()
   }
 
-  pub fn npm_package_references(&self) -> Vec<NpmPackageReference> {
+  pub fn npm_package_reqs(&self) -> Vec<NpmPackageReq> {
     self.npm_packages.iter().cloned().collect()
   }
 

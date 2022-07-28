@@ -14,10 +14,22 @@ use super::registry::NpmPackageVersionDistInfo;
 use super::registry::NpmPackageVersionInfo;
 use super::registry::NpmRegistryApi;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default)]
 pub struct NpmPackageReference {
+  pub req: NpmPackageReq,
+  pub sub_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct NpmPackageReq {
   pub name: String,
   pub version_req: semver::VersionReq,
+}
+
+impl std::fmt::Display for NpmPackageReq {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}@{}", self.name, self.version_req)
+  }
 }
 
 impl NpmPackageReference {
@@ -52,15 +64,23 @@ impl NpmPackageReference {
       ),
     };
     Ok(NpmPackageReference {
-      name: name.to_string(),
-      version_req,
+      req: NpmPackageReq {
+        name: name.to_string(),
+        version_req,
+      },
+      // todo: implement and support this
+      sub_path: None,
     })
   }
 }
 
 impl std::fmt::Display for NpmPackageReference {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}@{}", self.name, self.version_req)
+    if let Some(sub_path) = &self.sub_path {
+      write!(f, "{}/{}", self.req, sub_path)
+    } else {
+      write!(f, "{}", self.req)
+    }
   }
 }
 
@@ -87,7 +107,7 @@ pub struct NpmResolutionPackage {
 
 #[derive(Debug, Clone, Default)]
 struct NpmResolutionSnapshot {
-  package_references: HashMap<NpmPackageReference, semver::Version>,
+  package_reqs: HashMap<NpmPackageReq, semver::Version>,
   packages_by_name: HashMap<String, Vec<semver::Version>>,
   packages: HashMap<NpmPackageId, NpmResolutionPackage>,
 }
@@ -96,19 +116,19 @@ impl NpmResolutionSnapshot {
   /// Resolve a node package from a deno module.
   pub fn resolve_package_from_deno_module(
     &self,
-    reference: &NpmPackageReference,
+    req: &NpmPackageReq,
   ) -> Result<&NpmResolutionPackage, AnyError> {
-    match self.package_references.get(reference) {
+    match self.package_reqs.get(req) {
       Some(version) => Ok(
         self
           .packages
           .get(&NpmPackageId {
-            name: reference.name.clone(),
+            name: req.name.clone(),
             version: version.clone(),
           })
           .unwrap(),
       ),
-      None => bail!("could not find package '{}'", reference),
+      None => bail!("could not find npm package directory for '{}'", req),
     }
   }
 
@@ -138,7 +158,7 @@ impl NpmResolutionSnapshot {
 
   pub fn resolve_best_package_version(
     &self,
-    package: &NpmPackageReference,
+    package: &NpmPackageReq,
   ) -> Option<semver::Version> {
     let mut maybe_best_version: Option<&semver::Version> = None;
     if let Some(versions) = self.packages_by_name.get(&package.name) {
@@ -173,9 +193,9 @@ impl NpmResolution {
     }
   }
 
-  pub async fn add_package_references(
+  pub async fn add_package_reqs(
     &self,
-    mut packages: Vec<NpmPackageReference>,
+    mut packages: Vec<NpmPackageReq>,
   ) -> Result<(), AnyError> {
     // multiple packages are resolved on alphabetical order
     packages.sort_by(|a, b| a.name.cmp(&b.name));
@@ -187,14 +207,14 @@ impl NpmResolution {
 
     // go over the top level packages first
     for package_ref in packages {
-      if snapshot.package_references.contains_key(&package_ref) {
+      if snapshot.package_reqs.contains_key(&package_ref) {
         // skip analyzing this package, as there's already a matching top level package
         continue;
       }
       // inspect the list of current packages
       if let Some(version) = snapshot.resolve_best_package_version(&package_ref)
       {
-        snapshot.package_references.insert(package_ref, version);
+        snapshot.package_reqs.insert(package_ref, version);
         continue; // done, no need to continue
       }
 
@@ -228,7 +248,7 @@ impl NpmResolution {
         .or_default()
         .push(version_and_info.version.clone());
       snapshot
-        .package_references
+        .package_reqs
         .insert(package_ref, version_and_info.version);
     }
 
@@ -244,29 +264,26 @@ impl NpmResolution {
       for dep in deps {
         // check if an existing dependency matches this
         let id = if let Some(version) =
-          snapshot.resolve_best_package_version(&dep.reference)
+          snapshot.resolve_best_package_version(&dep.req)
         {
           NpmPackageId {
-            name: dep.reference.name.clone(),
+            name: dep.req.name.clone(),
             version,
           }
         } else {
           // get the information
-          let info = self.api.package_info(&dep.reference.name).await?;
+          let info = self.api.package_info(&dep.req.name).await?;
           let version_and_info =
-            get_resolved_package_version_and_info(&dep.reference, info, None)?;
+            get_resolved_package_version_and_info(&dep.req, info, None)?;
           let dependencies = version_and_info
             .info
             .dependencies_as_references()
             .with_context(|| {
-              format!(
-                "Package: {}@{}",
-                dep.reference.name, version_and_info.version
-              )
+              format!("Package: {}@{}", dep.req.name, version_and_info.version)
             })?;
 
           let id = NpmPackageId {
-            name: dep.reference.name.clone(),
+            name: dep.req.name.clone(),
             version: version_and_info.version.clone(),
           };
           pending_dependencies.push_back((id.clone(), dependencies));
@@ -280,7 +297,7 @@ impl NpmResolution {
           );
           snapshot
             .packages_by_name
-            .entry(dep.reference.name.clone())
+            .entry(dep.req.name.clone())
             .or_default()
             .push(id.version.clone());
 
@@ -316,12 +333,12 @@ impl NpmResolution {
   /// Resolve a node package from a deno module.
   pub fn resolve_package_from_deno_module(
     &self,
-    reference: &NpmPackageReference,
+    package: &NpmPackageReq,
   ) -> Result<NpmResolutionPackage, AnyError> {
     self
       .snapshot
       .read()
-      .resolve_package_from_deno_module(reference)
+      .resolve_package_from_deno_module(package)
       .cloned()
   }
 
@@ -337,7 +354,7 @@ struct VersionAndInfo {
 }
 
 fn get_resolved_package_version_and_info(
-  package: &NpmPackageReference,
+  package: &NpmPackageReq,
   info: NpmPackageInfo,
   parent: Option<&NpmPackageId>,
 ) -> Result<VersionAndInfo, AnyError> {

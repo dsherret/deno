@@ -11,6 +11,7 @@ use deno_core::error::AnyError;
 
 pub use resolution::NpmPackageId;
 pub use resolution::NpmPackageReference;
+pub use resolution::NpmPackageReq;
 
 use cache::NpmCache;
 use registry::NpmPackageVersionDistInfo;
@@ -31,11 +32,11 @@ impl NpmDependencyResolver {
     Self { cache, resolution }
   }
 
-  pub async fn add_package_references(
+  pub async fn add_package_reqs(
     &self,
-    references: Vec<NpmPackageReference>,
+    packages: Vec<NpmPackageReq>,
   ) -> Result<(), AnyError> {
-    self.resolution.add_package_references(references).await?;
+    self.resolution.add_package_reqs(packages).await?;
     // todo(dsherret): parallelize
     for package in self.resolution.all_packages() {
       self
@@ -60,11 +61,9 @@ impl NpmDependencyResolver {
 
   pub fn resolve_package_from_deno_module(
     &self,
-    reference: &NpmPackageReference,
+    package: &NpmPackageReq,
   ) -> Result<PathBuf, AnyError> {
-    let package = self
-      .resolution
-      .resolve_package_from_deno_module(reference)?;
+    let package = self.resolution.resolve_package_from_deno_module(package)?;
     Ok(self.cache.package_folder(&package.id))
   }
 }

@@ -81,6 +81,10 @@ impl NpmCache {
   }
 
   pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
-    self.location.join(&id.name).join(id.version.to_string())
+    self
+      .location
+      .join(&id.name)
+      .join(id.version.to_string())
+      .join("package")
   }
 }
