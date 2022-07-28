@@ -3,8 +3,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+use deno_ast::ModuleSpecifier;
 use deno_core::anyhow::bail;
 use deno_core::error::AnyError;
+use deno_core::url::Url;
 use deno_runtime::colors;
 use deno_runtime::deno_fetch::reqwest;
 
@@ -15,12 +17,18 @@ use super::NpmPackageVersionDistInfo;
 /// Stores a single copy of npm packages in a cache.
 #[derive(Clone)]
 pub struct NpmCache {
-  location: PathBuf,
+  root_dir: PathBuf,
+  // cached url representation of the root directory
+  root_dir_url: Url,
 }
 
 impl NpmCache {
-  pub fn new(location: PathBuf) -> Self {
-    Self { location }
+  pub fn new(root_dir: PathBuf) -> Self {
+    let root_dir_url = Url::from_directory_path(&root_dir).unwrap();
+    Self {
+      root_dir,
+      root_dir_url,
+    }
   }
 
   pub async fn ensure_package(
@@ -81,10 +89,39 @@ impl NpmCache {
   }
 
   pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
-    self
-      .location
-      .join(&id.name)
-      .join(id.version.to_string())
-      .join("package")
+    let name_parts = id.name.split('/');
+    let mut dir = self.root_dir.clone();
+    // ensure backslashes are used on windows
+    for part in name_parts {
+      dir = dir.join(part);
+    }
+    dir.join(id.version.to_string()).join("package")
+  }
+
+  pub fn get_package_from_referrer(
+    &self,
+    referrer: &ModuleSpecifier,
+  ) -> Option<NpmPackageId> {
+    let relative_url = self.root_dir_url.make_relative(referrer)?;
+    if relative_url.starts_with("../") {
+      return None;
+    }
+
+    // examples:
+    // * chalk/5.0.1/package
+    // * @types/chalk/5.0.1/package
+    let mut parts = relative_url
+      .split('/')
+      .enumerate()
+      .take_while(|(i, part)| *i < 2 || *part != "package")
+      .map(|(_, part)| part)
+      .collect::<Vec<_>>();
+    let version = parts.pop().unwrap();
+    let name = parts.join("/");
+
+    Some(NpmPackageId {
+      name,
+      version: semver::Version::parse(version).unwrap(),
+    })
   }
 }

@@ -9,6 +9,7 @@ use crate::cache::EmitCache;
 use crate::cache::FastInsecureHasher;
 use crate::cache::TypeCheckCache;
 use crate::compat;
+use crate::compat::node_resolve_new;
 use crate::compat::NodeEsmResolver;
 use crate::deno_dir;
 use crate::emit;
@@ -23,8 +24,8 @@ use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
 use crate::npm;
-use crate::npm::NpmDependencyResolver;
 use crate::npm::NpmPackageReference;
+use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
 
@@ -84,7 +85,7 @@ pub struct Inner {
   pub compiled_wasm_module_store: CompiledWasmModuleStore,
   maybe_resolver: Option<Arc<dyn deno_graph::source::Resolver + Send + Sync>>,
   maybe_file_watcher_reporter: Option<FileWatcherReporter>,
-  npm_resolver: NpmDependencyResolver,
+  npm_resolver: NpmPackageResolver,
 }
 
 impl Deref for ProcState {
@@ -221,7 +222,7 @@ impl ProcState {
       warn!("{}", ignored_options);
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
-    let npm_resolver = NpmDependencyResolver::new(dir.root.join("npm"));
+    let npm_resolver = NpmPackageResolver::new(dir.root.join("npm"));
 
     Ok(ProcState(Arc::new(Inner {
       dir,
@@ -451,6 +452,19 @@ impl ProcState {
         .npm_resolver
         .add_package_reqs(npm_package_references)
         .await?;
+
+      // add the builtin node modules to the graph data
+      let node_std_modules = compat::all_supported_builtin_module_urls();
+      let node_std_graph = self
+        .create_graph(
+          node_std_modules
+            .into_iter()
+            .map(|s| (s, ModuleKind::Esm))
+            .collect(),
+        )
+        .await?;
+      node_std_graph.valid()?;
+      self.graph_data.write().add_graph(&node_std_graph, false);
     }
 
     // type check if necessary
@@ -499,20 +513,25 @@ impl ProcState {
     specifier: &str,
     referrer: &str,
   ) -> Result<ModuleSpecifier, AnyError> {
-    eprintln!("REFERRER: {} ({})", referrer, specifier);
     // handle npm:<package-name>@<version> specifiers
     if let Ok(reference) = NpmPackageReference::from_str(&specifier) {
-      let package_dir = self
+      let package_id = self
         .npm_resolver
         .resolve_package_from_deno_module(&reference.req)?;
       return compat::package_config_resolve_new(
         reference.sub_path.as_deref().unwrap_or("."),
-        &package_dir,
+        &self.npm_resolver.package_folder(&package_id),
       );
     }
 
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
-      //if (refe)
+      if let Some(referrer_package) =
+        self.npm_resolver.get_package_from_referrer(&referrer)
+      {
+        // we're in an npm package, so use node resolution
+        return node_resolve_new(specifier, &referrer, &self.npm_resolver)?
+          .to_result();
+      }
 
       let graph_data = self.graph_data.read();
       let found_referrer = graph_data.follow_redirect(&referrer);

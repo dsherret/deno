@@ -13,6 +13,7 @@ use deno_core::ModuleSpecifier;
 use once_cell::sync::Lazy;
 
 pub use esm_resolver::check_if_should_use_esm_loader;
+pub use esm_resolver::node_resolve_new;
 pub use esm_resolver::package_config_resolve_new;
 pub use esm_resolver::NodeEsmResolver;
 
@@ -100,6 +101,25 @@ fn try_resolve_builtin_module(specifier: &str) -> Option<Url> {
   } else {
     None
   }
+}
+
+pub fn all_supported_builtin_module_urls() -> Vec<Url> {
+  SUPPORTED_MODULES
+    .iter()
+    .map(|specifier| {
+      let ext = match *specifier {
+        "stream/promises" => "mjs",
+        _ => "ts",
+      };
+      Url::parse(&format!(
+        "{}node/{}.{}",
+        NODE_COMPAT_URL.as_str(),
+        specifier,
+        ext,
+      ))
+      .unwrap()
+    })
+    .collect()
 }
 
 pub fn load_cjs_module(

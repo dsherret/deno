@@ -7,6 +7,7 @@ mod tarball;
 
 use std::path::PathBuf;
 
+use deno_ast::ModuleSpecifier;
 use deno_core::error::AnyError;
 
 pub use resolution::NpmPackageId;
@@ -18,12 +19,12 @@ use registry::NpmPackageVersionDistInfo;
 use registry::NpmRegistryApi;
 use resolution::NpmResolution;
 
-pub struct NpmDependencyResolver {
+pub struct NpmPackageResolver {
   cache: NpmCache,
   resolution: NpmResolution,
 }
 
-impl NpmDependencyResolver {
+impl NpmPackageResolver {
   pub fn new(root_cache_dir: PathBuf) -> Self {
     let cache = NpmCache::new(root_cache_dir);
     let api = NpmRegistryApi::default();
@@ -52,18 +53,29 @@ impl NpmDependencyResolver {
     &self,
     name: &str,
     referrer: &NpmPackageId,
-  ) -> Result<PathBuf, AnyError> {
+  ) -> Result<NpmPackageId, AnyError> {
     let package = self
       .resolution
       .resolve_package_from_package(name, referrer)?;
-    Ok(self.cache.package_folder(&package.id))
+    Ok(package.id)
   }
 
   pub fn resolve_package_from_deno_module(
     &self,
     package: &NpmPackageReq,
-  ) -> Result<PathBuf, AnyError> {
+  ) -> Result<NpmPackageId, AnyError> {
     let package = self.resolution.resolve_package_from_deno_module(package)?;
-    Ok(self.cache.package_folder(&package.id))
+    Ok(package.id)
+  }
+
+  pub fn package_folder(&self, package: &NpmPackageId) -> PathBuf {
+    self.cache.package_folder(package)
+  }
+
+  pub fn get_package_from_referrer(
+    &self,
+    referrer: &ModuleSpecifier,
+  ) -> Option<NpmPackageId> {
+    self.cache.get_package_from_referrer(referrer)
   }
 }
