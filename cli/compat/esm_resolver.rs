@@ -1,6 +1,7 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
 use super::errors;
+use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
 use deno_core::error::generic_error;
@@ -185,6 +186,7 @@ pub fn node_resolve_new(
       return Err(errors::err_unsupported_esm_url_scheme(&url));
     }
 
+    // todo(THIS PR): I think this is handled upstream so can be removed?
     if referrer.scheme() == "data" {
       let url = referrer.join(specifier).map_err(AnyError::from)?;
       return Ok(ResolveResponse::Specifier(url));
@@ -194,10 +196,72 @@ pub fn node_resolve_new(
   let conditions = DEFAULT_CONDITIONS;
   let url = module_resolve_new(specifier, referrer, conditions, npm_resolver)?;
 
-  let resolve_response = if url.as_str().starts_with("http") {
+  let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
+  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
+  // "preserveSymlinksMain"/"preserveSymlinks" options.
+  Ok(resolve_response)
+}
+
+pub fn node_resolve_npm_reference_new(
+  reference: &NpmPackageReference,
+  npm_resolver: &NpmPackageResolver,
+) -> Result<ResolveResponse, AnyError> {
+  let package_id =
+    npm_resolver.resolve_package_from_deno_module(&reference.req)?;
+  let url = package_config_resolve_new(
+    reference.sub_path.as_deref().unwrap_or("."),
+    &npm_resolver.package_folder(&package_id),
+    npm_resolver,
+  )?;
+
+  let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
+  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
+  // "preserveSymlinksMain"/"preserveSymlinks" options.
+  Ok(resolve_response)
+}
+
+fn package_config_resolve_new(
+  package_subpath: &str,
+  package_dir: &PathBuf,
+  npm_resolver: &NpmPackageResolver,
+) -> Result<ModuleSpecifier, AnyError> {
+  let package_json_path = package_dir.join("package.json");
+  // todo(dsherret): remove base from this code
+  let base =
+    ModuleSpecifier::from_directory_path(package_json_path.parent().unwrap())
+      .unwrap();
+  // todo(THIS PR): remove specifier
+  let package_config =
+    get_package_config(package_json_path.clone(), "<REMOVE_ME>", None)?;
+  let package_json_url =
+    ModuleSpecifier::from_file_path(&package_json_path).unwrap();
+  if package_config.exports.is_some() {
+    return package_exports_resolve_new(
+      package_json_url,
+      package_subpath.to_string(),
+      package_config,
+      &base,
+      DEFAULT_CONDITIONS,
+      npm_resolver,
+    );
+  }
+  if package_subpath == "." {
+    return legacy_main_resolve(&package_json_url, &package_config, &base);
+  }
+
+  return package_json_url
+    .join(&package_subpath)
+    .map_err(AnyError::from);
+}
+
+fn url_to_resolve_response_new(
+  url: ModuleSpecifier,
+  npm_resolver: &NpmPackageResolver,
+) -> Result<ResolveResponse, AnyError> {
+  Ok(if url.as_str().starts_with("http") {
     ResolveResponse::Esm(url)
   } else if url.as_str().ends_with(".js") {
-    let package_config = get_package_scope_config(&url)?;
+    let package_config = get_package_scope_config_new(&url, npm_resolver)?;
     if package_config.typ == "module" {
       ResolveResponse::Esm(url)
     } else {
@@ -207,10 +271,7 @@ pub fn node_resolve_new(
     ResolveResponse::CommonJs(url)
   } else {
     ResolveResponse::Esm(url)
-  };
-  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
-  // "preserveSymlinksMain"/"preserveSymlinks" options.
-  Ok(resolve_response)
+  })
 }
 
 fn to_file_path(url: &ModuleSpecifier) -> PathBuf {
@@ -1438,40 +1499,6 @@ fn package_resolve_new(
   }
   if package_subpath == "." {
     return legacy_main_resolve(&package_json_url, &package_config, referrer);
-  }
-
-  return package_json_url
-    .join(&package_subpath)
-    .map_err(AnyError::from);
-}
-
-// todo(dsherret): this is an extraction out from package_resolve
-// but we should eventually remove the other code and clean this up.
-pub fn package_config_resolve_new(
-  package_subpath: &str,
-  package_dir: &PathBuf,
-) -> Result<ModuleSpecifier, AnyError> {
-  let package_json_path = package_dir.join("package.json");
-  // todo(dsherret): remove base from this code
-  let base =
-    ModuleSpecifier::from_directory_path(package_json_path.parent().unwrap())
-      .unwrap();
-  // todo(THIS PR): remove specifier
-  let package_config =
-    get_package_config(package_json_path.clone(), "<REMOVE_ME>", None)?;
-  let package_json_url =
-    ModuleSpecifier::from_file_path(&package_json_path).unwrap();
-  if package_config.exports.is_some() {
-    return package_exports_resolve(
-      package_json_url,
-      package_subpath.to_string(),
-      package_config,
-      &base,
-      DEFAULT_CONDITIONS,
-    );
-  }
-  if package_subpath == "." {
-    return legacy_main_resolve(&package_json_url, &package_config, &base);
   }
 
   return package_json_url

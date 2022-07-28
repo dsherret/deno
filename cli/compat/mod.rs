@@ -14,7 +14,7 @@ use once_cell::sync::Lazy;
 
 pub use esm_resolver::check_if_should_use_esm_loader;
 pub use esm_resolver::node_resolve_new;
-pub use esm_resolver::package_config_resolve_new;
+pub use esm_resolver::node_resolve_npm_reference_new;
 pub use esm_resolver::NodeEsmResolver;
 
 // WARNING: Ensure this is the only deno_std version reference as this

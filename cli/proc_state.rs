@@ -86,6 +86,7 @@ pub struct Inner {
   maybe_resolver: Option<Arc<dyn deno_graph::source::Resolver + Send + Sync>>,
   maybe_file_watcher_reporter: Option<FileWatcherReporter>,
   npm_resolver: NpmPackageResolver,
+  cjs_resolutions: Mutex<HashSet<ModuleSpecifier>>,
 }
 
 impl Deref for ProcState {
@@ -247,6 +248,7 @@ impl ProcState {
       maybe_resolver,
       maybe_file_watcher_reporter,
       npm_resolver,
+      cjs_resolutions: Default::default(),
     })))
   }
 
@@ -508,6 +510,17 @@ impl ProcState {
     Ok(())
   }
 
+  fn handle_node_resolve_response(
+    &self,
+    response: ResolveResponse,
+  ) -> Result<ModuleSpecifier, AnyError> {
+    if let ResolveResponse::CommonJs(specifier) = &response {
+      // remember that this was a common js resolution
+      self.cjs_resolutions.lock().insert(specifier.clone());
+    }
+    response.to_result()
+  }
+
   pub fn resolve(
     &self,
     specifier: &str,
@@ -515,22 +528,23 @@ impl ProcState {
   ) -> Result<ModuleSpecifier, AnyError> {
     // handle npm:<package-name>@<version> specifiers
     if let Ok(reference) = NpmPackageReference::from_str(&specifier) {
-      let package_id = self
-        .npm_resolver
-        .resolve_package_from_deno_module(&reference.req)?;
-      return compat::package_config_resolve_new(
-        reference.sub_path.as_deref().unwrap_or("."),
-        &self.npm_resolver.package_folder(&package_id),
+      return self.handle_node_resolve_response(
+        compat::node_resolve_npm_reference_new(&reference, &self.npm_resolver)?,
       );
     }
 
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
-      if let Some(referrer_package) =
-        self.npm_resolver.get_package_from_referrer(&referrer)
+      if self
+        .npm_resolver
+        .get_package_from_referrer(&referrer)
+        .is_some()
       {
         // we're in an npm package, so use node resolution
-        return node_resolve_new(specifier, &referrer, &self.npm_resolver)?
-          .to_result();
+        return self.handle_node_resolve_response(node_resolve_new(
+          specifier,
+          &referrer,
+          &self.npm_resolver,
+        )?);
       }
 
       let graph_data = self.graph_data.read();
