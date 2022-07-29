@@ -95,8 +95,12 @@ pub fn get_node_imports() -> Vec<(Url, Vec<String>)> {
 
 fn try_resolve_builtin_module(specifier: &str) -> Option<Url> {
   if SUPPORTED_MODULES.contains(&specifier) {
+    let ext = match specifier {
+      "stream/promises" => "mjs",
+      _ => "ts",
+    };
     let module_url =
-      format!("{}node/{}.ts", NODE_COMPAT_URL.as_str(), specifier);
+      format!("{}node/{}.{}", NODE_COMPAT_URL.as_str(), specifier, ext);
     Some(Url::parse(&module_url).unwrap())
   } else {
     None
@@ -106,19 +110,7 @@ fn try_resolve_builtin_module(specifier: &str) -> Option<Url> {
 pub fn all_supported_builtin_module_urls() -> Vec<Url> {
   SUPPORTED_MODULES
     .iter()
-    .map(|specifier| {
-      let ext = match *specifier {
-        "stream/promises" => "mjs",
-        _ => "ts",
-      };
-      Url::parse(&format!(
-        "{}node/{}.{}",
-        NODE_COMPAT_URL.as_str(),
-        specifier,
-        ext,
-      ))
-      .unwrap()
-    })
+    .map(|specifier| try_resolve_builtin_module(specifier).unwrap())
     .collect()
 }
 

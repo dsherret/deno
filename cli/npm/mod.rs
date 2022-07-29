@@ -33,6 +33,11 @@ impl NpmPackageResolver {
     Self { cache, resolution }
   }
 
+  /// If the resolver has resolved any npm packages.
+  pub fn has_packages(&self) -> bool {
+    self.resolution.has_packages()
+  }
+
   pub async fn add_package_reqs(
     &self,
     packages: Vec<NpmPackageReq>,

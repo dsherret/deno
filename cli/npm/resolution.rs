@@ -345,6 +345,10 @@ impl NpmResolution {
   pub fn all_packages(&self) -> Vec<NpmResolutionPackage> {
     self.snapshot.read().all_packages()
   }
+
+  pub fn has_packages(&self) -> bool {
+    !self.snapshot.read().packages.is_empty()
+  }
 }
 
 #[derive(Clone)]

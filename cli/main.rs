@@ -110,7 +110,7 @@ use std::sync::Arc;
 fn create_web_worker_preload_module_callback(
   ps: ProcState,
 ) -> Arc<PreloadModuleCb> {
-  let compat = ps.options.compat();
+  let compat = ps.options.compat() || ps.npm_resolver.has_packages();
 
   Arc::new(move |mut worker| {
     let fut = async move {
@@ -593,7 +593,7 @@ async fn eval_command(
   // to allow module access by TS compiler.
   ps.file_fetcher.insert_cached(file);
   debug!("main_module {}", &main_module);
-  if ps.options.compat() {
+  if ps.options.compat() || ps.npm_resolver.has_packages() {
     worker.execute_side_module(&compat::GLOBAL_URL).await?;
   }
   worker.execute_main_module(&main_module).await?;
@@ -1107,6 +1107,10 @@ async fn run_command(
       )?;
     }
   } else {
+    if ps.npm_resolver.has_packages() {
+      worker.execute_side_module(&compat::GLOBAL_URL).await?;
+      worker.execute_side_module(&compat::MODULE_URL).await?;
+    }
     // Regular ES module execution
     worker.execute_main_module(&main_module).await?;
   }

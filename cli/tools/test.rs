@@ -816,6 +816,10 @@ async fn test_specifier(
         worker.run_event_loop(false).await?;
       }
     } else {
+      if ps.npm_resolver.has_packages() {
+        worker.execute_side_module(&compat::GLOBAL_URL).await?;
+        worker.execute_side_module(&compat::MODULE_URL).await?;
+      }
       // We execute the module module as a side module so that import.meta.main is not set.
       worker.execute_side_module(&specifier).await?;
     }

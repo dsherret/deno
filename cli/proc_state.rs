@@ -460,6 +460,7 @@ impl ProcState {
         .create_graph({
           let mut roots = compat::all_supported_builtin_module_urls();
           roots.push(compat::GLOBAL_URL.clone());
+          roots.push(compat::MODULE_URL.clone());
           roots.into_iter().map(|s| (s, ModuleKind::Esm)).collect()
         })
         .await?;
