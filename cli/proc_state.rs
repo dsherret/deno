@@ -456,14 +456,12 @@ impl ProcState {
         .await?;
 
       // add the builtin node modules to the graph data
-      let node_std_modules = compat::all_supported_builtin_module_urls();
       let node_std_graph = self
-        .create_graph(
-          node_std_modules
-            .into_iter()
-            .map(|s| (s, ModuleKind::Esm))
-            .collect(),
-        )
+        .create_graph({
+          let mut roots = compat::all_supported_builtin_module_urls();
+          roots.push(compat::GLOBAL_URL.clone());
+          roots.into_iter().map(|s| (s, ModuleKind::Esm)).collect()
+        })
         .await?;
       node_std_graph.valid()?;
       self.graph_data.write().add_graph(&node_std_graph, false);
