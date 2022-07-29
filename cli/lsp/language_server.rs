@@ -75,7 +75,7 @@ use crate::tools::fmt::format_parsed_source;
 pub const REGISTRIES_PATH: &str = "registries";
 const CACHE_PATH: &str = "deps";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LanguageServer(Arc<tokio::sync::Mutex<Inner>>);
 
 /// Snapshot of the state used by TSC.
@@ -88,7 +88,6 @@ pub struct StateSnapshot {
   pub root_uri: Option<Url>,
 }
 
-#[derive(Debug)]
 pub struct Inner {
   /// Cached versions of "fixed" assets that can either be inlined in Rust or
   /// are part of the TypeScript snapshot and have to be fetched out.

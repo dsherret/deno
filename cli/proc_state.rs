@@ -223,7 +223,7 @@ impl ProcState {
       warn!("{}", ignored_options);
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
-    let npm_resolver = NpmPackageResolver::new(dir.root.join("npm"));
+    let npm_resolver = NpmPackageResolver::from_deno_dir(&dir);
 
     Ok(ProcState(Arc::new(Inner {
       dir,
@@ -415,8 +415,7 @@ impl ProcState {
             &module.specifier,
             module.maybe_source.as_ref().unwrap().to_string(),
             module.media_type,
-          )
-          .await?;
+          )?;
           let mut graph_data = self.graph_data.write();
           graph_data
             .add_cjs_esm_translation(&module.specifier, translated_source);
@@ -536,7 +535,7 @@ impl ProcState {
       if self
         .npm_resolver
         .get_package_from_specifier(&referrer)
-        .is_some()
+        .is_ok()
       {
         // we're in an npm package, so use node resolution
         return self.handle_node_resolve_response(node_resolve_new(

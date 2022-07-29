@@ -1,5 +1,6 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
+use crate::compat;
 use crate::emit::emit_parsed_source;
 use crate::emit::TsTypeLib;
 use crate::graph_util::ModuleEntry;
@@ -124,13 +125,24 @@ impl CliModuleLoader {
       .ps
       .npm_resolver
       .get_package_from_specifier(specifier)
-      .is_some()
+      .is_ok()
     {
       let file_path = specifier.to_file_path().unwrap();
       let code = std::fs::read_to_string(file_path)?;
       let is_cjs = self.ps.cjs_resolutions.lock().contains(specifier);
 
-      // todo: handle transforming cjs here and injecting globals for mjs
+      // translate cjs to esm if it's cjs
+      let code = if is_cjs {
+        compat::translate_cjs_to_esm_new(
+          &self.ps.file_fetcher,
+          &specifier,
+          code,
+          MediaType::Cjs,
+          &self.ps.npm_resolver,
+        )?
+      } else {
+        code
+      };
 
       ModuleCodeSource {
         code,

@@ -4,6 +4,7 @@ use super::errors;
 use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
+use deno_core::anyhow::Context;
 use deno_core::error::generic_error;
 use deno_core::error::AnyError;
 use deno_core::serde_json;
@@ -212,7 +213,8 @@ pub fn node_resolve_npm_reference_new(
     reference.sub_path.as_deref().unwrap_or("."),
     &npm_resolver.package_folder(&package_id),
     npm_resolver,
-  )?;
+  )
+  .with_context(|| format!("resolving package config for {}", reference))?;
 
   let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
   // TODO(bartlomieju): skipped checking errors for commonJS resolution and

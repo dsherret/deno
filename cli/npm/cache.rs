@@ -35,10 +35,10 @@ impl NpmCache {
     &self,
     id: &NpmPackageId,
     dist: &NpmPackageVersionDistInfo,
-  ) -> Result<PathBuf, AnyError> {
+  ) -> Result<(), AnyError> {
     let package_folder = self.package_folder(id);
     if package_folder.exists() {
-      return Ok(package_folder);
+      return Ok(());
     }
 
     log::log!(
@@ -57,13 +57,8 @@ impl NpmCache {
     } else {
       let bytes = response.bytes().await?;
 
-      match verify_and_extract_tarball(
-        id,
-        &bytes,
-        &dist.integrity,
-        &package_folder,
-      ) {
-        Ok(()) => Ok(package_folder),
+      match verify_and_extract_tarball(id, &bytes, &dist, &package_folder) {
+        Ok(()) => Ok(()),
         Err(err) => {
           if let Err(remove_err) = fs::remove_dir_all(&package_folder) {
             if remove_err.kind() != std::io::ErrorKind::NotFound {
@@ -95,7 +90,7 @@ impl NpmCache {
     for part in name_parts {
       dir = dir.join(part);
     }
-    dir.join(id.version.to_string()).join("package")
+    dir.join(id.version.to_string())
   }
 
   pub fn get_package_from_specifier(

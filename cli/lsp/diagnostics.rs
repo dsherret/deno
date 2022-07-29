@@ -14,6 +14,7 @@ use super::tsc::TsServer;
 
 use crate::args::LintConfig;
 use crate::diagnostics;
+use crate::npm::NpmPackageReference;
 
 use deno_ast::MediaType;
 use deno_core::anyhow::anyhow;
@@ -846,6 +847,10 @@ fn diagnose_resolved(
               .push(DenoDiagnostic::NoAssertType.to_lsp_diagnostic(&range)),
           }
         }
+      } else if NpmPackageReference::from_specifier(specifier).is_ok() {
+        // todo(dsherret): show diagnostic for an npm url that
+        // has an invalid requirement, but don't show anything
+        // for caching as that should be done on demand
       } else {
         // When the document is not available, it means that it cannot be found
         // in the cache or locally on the disk, so we want to issue a diagnostic

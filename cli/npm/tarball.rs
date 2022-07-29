@@ -7,19 +7,28 @@ use deno_core::error::AnyError;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
+use super::registry::NpmPackageVersionDistInfo;
 use super::NpmPackageId;
 
 pub fn verify_and_extract_tarball(
   package: &NpmPackageId,
   data: &[u8],
-  npm_integrity: &str,
+  dist_info: &NpmPackageVersionDistInfo,
   output_folder: &Path,
 ) -> Result<(), AnyError> {
-  verify_tarball(package, data, npm_integrity)?;
+  if let Some(integrity) = &dist_info.integrity {
+    verify_tarball_integrity(package, data, integrity)?;
+  } else {
+    // todo(dsherret): check shasum here
+    bail!(
+      "npm packages with no integrity are not implemented for '{}'",
+      package
+    );
+  }
   extract_tarball(data, output_folder)
 }
 
-fn verify_tarball(
+fn verify_tarball_integrity(
   package: &NpmPackageId,
   data: &[u8],
   npm_integrity: &str,
@@ -80,24 +89,24 @@ mod test {
     let actual_checksum =
       "z4phnx7vul3xvchq1m2ab9yg5aulvxxcg/spidns6c5h0ne8xyxysp+dgnkhfuwvy7kxvudbeoglodj6+sfapg==";
     assert_eq!(
-      verify_tarball(&package_id, &Vec::new(), "test")
+      verify_tarball_integrity(&package_id, &Vec::new(), "test")
         .unwrap_err()
         .to_string(),
       "not implemented integrity kind for package@1.0.0: test",
     );
     assert_eq!(
-      verify_tarball(&package_id, &Vec::new(), "sha1-test")
+      verify_tarball_integrity(&package_id, &Vec::new(), "sha1-test")
         .unwrap_err()
         .to_string(),
       "not implemented hash function for package@1.0.0: sha1",
     );
     assert_eq!(
-      verify_tarball(&package_id, &Vec::new(), "sha512-test")
+      verify_tarball_integrity(&package_id, &Vec::new(), "sha512-test")
         .unwrap_err()
         .to_string(),
       format!("tarball checksum did not match what was provided by npm registry for package@1.0.0.\n\nExpected: test\nActual: {}", actual_checksum),
     );
-    assert!(verify_tarball(
+    assert!(verify_tarball_integrity(
       &package_id,
       &Vec::new(),
       &format!("sha512-{}", actual_checksum)

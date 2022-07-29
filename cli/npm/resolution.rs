@@ -106,7 +106,7 @@ pub struct NpmResolutionPackage {
 }
 
 #[derive(Debug, Clone, Default)]
-struct NpmResolutionSnapshot {
+pub struct NpmResolutionSnapshot {
   package_reqs: HashMap<NpmPackageReq, semver::Version>,
   packages_by_name: HashMap<String, Vec<semver::Version>>,
   packages: HashMap<NpmPackageId, NpmResolutionPackage>,
@@ -348,6 +348,10 @@ impl NpmResolution {
 
   pub fn has_packages(&self) -> bool {
     !self.snapshot.read().packages.is_empty()
+  }
+
+  pub fn snapshot(&self) -> NpmResolutionSnapshot {
+    self.snapshot.read().clone()
   }
 }
 

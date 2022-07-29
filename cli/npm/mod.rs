@@ -8,16 +8,20 @@ mod tarball;
 use std::path::PathBuf;
 
 use deno_ast::ModuleSpecifier;
+use deno_core::anyhow::bail;
 use deno_core::error::AnyError;
 
 pub use resolution::NpmPackageId;
 pub use resolution::NpmPackageReference;
 pub use resolution::NpmPackageReq;
+pub use resolution::NpmResolutionSnapshot;
 
 use cache::NpmCache;
 use registry::NpmPackageVersionDistInfo;
 use registry::NpmRegistryApi;
 use resolution::NpmResolution;
+
+use crate::deno_dir::DenoDir;
 
 pub struct NpmPackageResolver {
   cache: NpmCache,
@@ -33,9 +37,19 @@ impl NpmPackageResolver {
     Self { cache, resolution }
   }
 
+  pub fn from_deno_dir(dir: &DenoDir) -> Self {
+    Self::new(dir.root.join("npm"))
+  }
+
   /// If the resolver has resolved any npm packages.
   pub fn has_packages(&self) -> bool {
     self.resolution.has_packages()
+  }
+
+  /// Creates a snapshot of the npm resolution for use
+  /// in the language server.
+  pub fn snapshot(&self) -> NpmResolutionSnapshot {
+    self.resolution.snapshot()
   }
 
   pub async fn add_package_reqs(
@@ -74,13 +88,16 @@ impl NpmPackageResolver {
   }
 
   pub fn package_folder(&self, package: &NpmPackageId) -> PathBuf {
-    self.cache.package_folder(package)
+    self.cache.package_folder(package).join("package")
   }
 
   pub fn get_package_from_specifier(
     &self,
     specifier: &ModuleSpecifier,
-  ) -> Option<NpmPackageId> {
-    self.cache.get_package_from_specifier(specifier)
+  ) -> Result<NpmPackageId, AnyError> {
+    match self.cache.get_package_from_specifier(specifier) {
+      Some(id) => Ok(id),
+      None => bail!("could not find npm package for '{}'", specifier),
+    }
   }
 }
