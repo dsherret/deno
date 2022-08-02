@@ -2971,7 +2971,7 @@ impl Inner {
       for average in averages {
         writeln!(
           contents,
-          "|{}|{}ms|{}|\n",
+          "|{}|{}ms|{}|",
           average.name, average.average_duration, average.count
         )
         .unwrap();
