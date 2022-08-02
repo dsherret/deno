@@ -67,6 +67,7 @@ use crate::fmt_errors::format_js_error;
 use crate::graph_util::graph_lock_or_exit;
 use crate::graph_util::graph_valid;
 use crate::module_loader::CliModuleLoader;
+use crate::npm::NpmPackageReference;
 use crate::proc_state::ProcState;
 use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
@@ -87,6 +88,7 @@ use deno_core::serde_json::json;
 use deno_core::v8_set_flags;
 use deno_core::Extension;
 use deno_core::ModuleSpecifier;
+use deno_graph::source::ResolveResponse;
 use deno_runtime::colors;
 use deno_runtime::ops::worker_host::CreateWebWorkerCb;
 use deno_runtime::ops::worker_host::PreloadModuleCb;
@@ -1046,74 +1048,115 @@ async fn run_command(
     return run_with_watch(flags, run_flags.script).await;
   }
 
-  // TODO(bartlomieju): it should not be resolved here if we're in compat mode
-  // because it might be a bare specifier
-  // TODO(bartlomieju): actually I think it will also fail if there's an import
-  // map specified and bare specifier is used on the command line - this should
-  // probably call `ProcState::resolve` instead
-  let main_module = resolve_url_or_path(&run_flags.script)?;
   let ps = ProcState::build(flags).await?;
   let permissions =
     Permissions::from_options(&ps.options.permissions_options());
-  let mut worker = create_main_worker(
-    &ps,
-    main_module.clone(),
-    permissions,
-    vec![],
-    Default::default(),
-  );
 
-  let mut maybe_coverage_collector =
-    if let Some(ref coverage_dir) = ps.coverage_dir {
-      let session = worker.create_inspector_session().await;
-
-      let coverage_dir = PathBuf::from(coverage_dir);
-      let mut coverage_collector =
-        tools::coverage::CoverageCollector::new(coverage_dir, session);
-      worker
-        .with_event_loop(coverage_collector.start_collecting().boxed_local())
+  let (mut worker, main_module, mut maybe_coverage_collector) =
+    if let Ok(package_ref) = NpmPackageReference::from_str(&run_flags.script) {
+      ps.npm_resolver
+        .add_package_reqs(vec![package_ref.req.clone()])
         .await?;
-      Some(coverage_collector)
+      let package_id = ps
+        .npm_resolver
+        .resolve_package_from_deno_module(&package_ref.req)?;
+      let resolve_response = compat::node_resolve_binary_export(
+        &package_id,
+        None,
+        &ps.npm_resolver,
+      )?;
+      let use_esm_loader = matches!(resolve_response, ResolveResponse::Esm(_));
+      let main_module = resolve_response.to_result()?;
+      let mut worker = create_main_worker(
+        &ps,
+        main_module.clone(),
+        permissions,
+        vec![],
+        Default::default(),
+      );
+      worker.execute_side_module(&compat::GLOBAL_URL).await?;
+      worker.execute_side_module(&compat::MODULE_URL).await?;
+      if use_esm_loader {
+        worker.execute_main_module(&main_module).await?;
+      } else {
+        compat::load_cjs_module(
+          &mut worker.js_runtime,
+          &main_module.to_file_path().unwrap().display().to_string(),
+          true,
+        )?;
+      }
+      (worker, main_module, None)
     } else {
-      None
+      // TODO(bartlomieju): it should not be resolved here if we're in compat mode
+      // because it might be a bare specifier
+      // TODO(bartlomieju): actually I think it will also fail if there's an import
+      // map specified and bare specifier is used on the command line - this should
+      // probably call `ProcState::resolve` instead
+      let main_module = resolve_url_or_path(&run_flags.script)?;
+      let mut worker = create_main_worker(
+        &ps,
+        main_module.clone(),
+        permissions,
+        vec![],
+        Default::default(),
+      );
+      let maybe_coverage_collector = if let Some(ref coverage_dir) =
+        ps.coverage_dir
+      {
+        let session = worker.create_inspector_session().await;
+
+        let coverage_dir = PathBuf::from(coverage_dir);
+        let mut coverage_collector =
+          tools::coverage::CoverageCollector::new(coverage_dir, session);
+        worker
+          .with_event_loop(coverage_collector.start_collecting().boxed_local())
+          .await?;
+        Some(coverage_collector)
+      } else {
+        None
+      };
+
+      if ps.options.compat() {
+        // TODO(bartlomieju): fix me
+        assert_eq!(main_module.scheme(), "file");
+
+        // Set up Node globals
+        worker.execute_side_module(&compat::GLOBAL_URL).await?;
+        // And `module` module that we'll use for checking which
+        // loader to use and potentially load CJS module with.
+        // This allows to skip permission check for `--allow-net`
+        // which would otherwise be requested by dynamically importing
+        // this file.
+        worker.execute_side_module(&compat::MODULE_URL).await?;
+
+        let use_esm_loader =
+          compat::check_if_should_use_esm_loader(&main_module)?;
+
+        if use_esm_loader {
+          // ES module execution in Node compatiblity mode
+          worker.execute_main_module(&main_module).await?;
+        } else {
+          // CJS module execution in Node compatiblity mode
+          compat::load_cjs_module(
+            &mut worker.js_runtime,
+            &main_module.to_file_path().unwrap().display().to_string(),
+            true,
+          )?;
+        }
+      } else {
+        // todo(dsherret): this is a temporary solution that we should remove
+        if ps.npm_resolver.has_packages() {
+          worker.execute_side_module(&compat::GLOBAL_URL).await?;
+          worker.execute_side_module(&compat::MODULE_URL).await?;
+        }
+        // Regular ES module execution
+        worker.execute_main_module(&main_module).await?;
+      }
+
+      (worker, main_module, maybe_coverage_collector)
     };
 
   debug!("main_module {}", main_module);
-
-  if ps.options.compat() {
-    // TODO(bartlomieju): fix me
-    assert_eq!(main_module.scheme(), "file");
-
-    // Set up Node globals
-    worker.execute_side_module(&compat::GLOBAL_URL).await?;
-    // And `module` module that we'll use for checking which
-    // loader to use and potentially load CJS module with.
-    // This allows to skip permission check for `--allow-net`
-    // which would otherwise be requested by dynamically importing
-    // this file.
-    worker.execute_side_module(&compat::MODULE_URL).await?;
-
-    let use_esm_loader = compat::check_if_should_use_esm_loader(&main_module)?;
-
-    if use_esm_loader {
-      // ES module execution in Node compatiblity mode
-      worker.execute_main_module(&main_module).await?;
-    } else {
-      // CJS module execution in Node compatiblity mode
-      compat::load_cjs_module(
-        &mut worker.js_runtime,
-        &main_module.to_file_path().unwrap().display().to_string(),
-        true,
-      )?;
-    }
-  } else {
-    if ps.npm_resolver.has_packages() {
-      worker.execute_side_module(&compat::GLOBAL_URL).await?;
-      worker.execute_side_module(&compat::MODULE_URL).await?;
-    }
-    // Regular ES module execution
-    worker.execute_main_module(&main_module).await?;
-  }
 
   worker.dispatch_load_event(&located_script_name!())?;
 

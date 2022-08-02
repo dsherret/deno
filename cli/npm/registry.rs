@@ -59,7 +59,10 @@ impl NpmPackageVersionInfo {
         .with_context(|| format!("Dependency: {}", bare_specifier))?;
       Ok(NpmDependencyEntry {
         bare_specifier,
-        req: NpmPackageReq { name, version_req },
+        req: NpmPackageReq {
+          name,
+          version_req: Some(version_req),
+        },
       })
     }
 

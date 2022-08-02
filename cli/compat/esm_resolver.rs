@@ -1,9 +1,12 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
 use super::errors;
+use super::package_json::PackageJson;
+use crate::npm::NpmPackageId;
 use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
+use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::generic_error;
 use deno_core::error::AnyError;
@@ -196,6 +199,59 @@ pub fn node_resolve_new(
 
   let conditions = DEFAULT_CONDITIONS;
   let url = module_resolve_new(specifier, referrer, conditions, npm_resolver)?;
+
+  let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
+  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
+  // "preserveSymlinksMain"/"preserveSymlinks" options.
+  Ok(resolve_response)
+}
+
+pub fn node_resolve_binary_export(
+  package_id: &NpmPackageId,
+  bin_name: Option<&str>,
+  npm_resolver: &NpmPackageResolver,
+) -> Result<ResolveResponse, AnyError> {
+  let package_folder = npm_resolver.package_folder(&package_id);
+  let package_json_path = package_folder.join("package.json");
+  let package_json = PackageJson::load(package_json_path.clone())?;
+  let bin = match &package_json.bin {
+    Some(bin) => bin,
+    None => bail!(
+      "package {} did not have a 'bin' property in its package.json",
+      package_id
+    ),
+  };
+  let bin_name = bin_name.unwrap_or(&package_id.name);
+  let bin_entry = match bin {
+    Value::String(_) => {
+      if bin_name != package_id.name {
+        None
+      } else {
+        Some(bin)
+      }
+    }
+    Value::Object(o) => o.get(bin_name),
+    _ => bail!("package {} did not have a 'bin' property with a string or object value in its package.json", package_id),
+  };
+  let bin_entry = match bin_entry {
+    Some(e) => e,
+    None => bail!(
+      "package {} did not have a 'bin' entry for {} in its package.json",
+      package_id,
+      bin_name,
+    ),
+  };
+  let bin_entry = match bin_entry {
+    Value::String(s) => s,
+    _ => bail!("package {} had non-implemented non-string property 'bin' -> '{}' in its package.json", package_id, bin_name),
+  };
+
+  // todo(dsherret): reuse PackageJson here
+  let url =
+    package_config_resolve_new(bin_entry, &package_folder, npm_resolver)
+      .with_context(|| {
+        format!("resolving package config for {}", package_id)
+      })?;
 
   let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
   // TODO(bartlomieju): skipped checking errors for commonJS resolution and

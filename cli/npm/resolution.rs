@@ -23,12 +23,24 @@ pub struct NpmPackageReference {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct NpmPackageReq {
   pub name: String,
-  pub version_req: semver::VersionReq,
+  pub version_req: Option<semver::VersionReq>,
 }
 
 impl std::fmt::Display for NpmPackageReq {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}@{}", self.name, self.version_req)
+    match &self.version_req {
+      Some(req) => write!(f, "{}@{}", self.name, req),
+      None => write!(f, "{}", self.name),
+    }
+  }
+}
+
+impl NpmPackageReq {
+  pub fn matches(&self, version: &semver::Version) -> bool {
+    match &self.version_req {
+      Some(req) => req.matches(version),
+      None => version.pre.is_empty(),
+    }
   }
 }
 
@@ -47,21 +59,18 @@ impl NpmPackageReference {
       }
     };
     let (name, version_req) = match specifier.rsplit_once('@') {
-      Some(r) => r,
-      None => {
-        bail!(
-          "npm specifier must include a version (ex. `package@1.0.0`) for '{}'",
-          specifier
-        );
-      }
-    };
-    let version_req = match semver::VersionReq::parse(version_req) {
-      Ok(v) => v,
-      Err(err) => bail!(
-        "npm specifier must have a valid version requirement for '{}'.\n\n{}",
-        specifier,
-        err
+      Some((name, version_req)) => (
+        name,
+        match semver::VersionReq::parse(version_req) {
+          Ok(v) => Some(v),
+          Err(err) => bail!(
+          "npm specifier must have a valid version requirement for '{}'.\n\n{}",
+          specifier,
+          err
+        ),
+        },
       ),
+      None => (specifier, None),
     };
     Ok(NpmPackageReference {
       req: NpmPackageReq {
@@ -163,7 +172,7 @@ impl NpmResolutionSnapshot {
     let mut maybe_best_version: Option<&semver::Version> = None;
     if let Some(versions) = self.packages_by_name.get(&package.name) {
       for version in versions {
-        if package.version_req.matches(version) {
+        if package.matches(version) {
           let is_best_version = maybe_best_version
             .as_ref()
             .map(|best_version| (*best_version).cmp(version).is_lt())
@@ -369,7 +378,7 @@ fn get_resolved_package_version_and_info(
   let mut maybe_best_version: Option<VersionAndInfo> = None;
   for (_, version_info) in info.versions.into_iter() {
     let version = semver::Version::parse(&version_info.version)?;
-    if package.version_req.matches(&version) {
+    if package.matches(&version) {
       let is_best_version = maybe_best_version
         .as_ref()
         .map(|best_version| best_version.version.cmp(&version).is_lt())
@@ -386,9 +395,13 @@ fn get_resolved_package_version_and_info(
   match maybe_best_version {
     Some(v) => Ok(v),
     None => bail!(
-      "could not package '{}' matching '{}'{}",
+      "could not package '{}' matching {}{}",
       package.name,
-      package.version_req,
+      package
+        .version_req
+        .as_ref()
+        .map(|v| format!("'{}'", v))
+        .unwrap_or("non pre-release".to_string()),
       match parent {
         Some(id) => format!(" as specified in {}", id),
         None => String::new(),

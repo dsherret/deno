@@ -2,6 +2,7 @@
 
 mod errors;
 mod esm_resolver;
+mod package_json;
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -16,14 +17,16 @@ use deno_core::serde_json::Value;
 use deno_core::url::Url;
 use deno_core::JsRuntime;
 use deno_core::ModuleSpecifier;
-use node_resolver::PackageJson;
 use once_cell::sync::Lazy;
+use path_clean::PathClean;
 
 pub use esm_resolver::check_if_should_use_esm_loader;
+pub use esm_resolver::node_resolve_binary_export;
 pub use esm_resolver::node_resolve_new;
 pub use esm_resolver::node_resolve_npm_reference_new;
 pub use esm_resolver::NodeEsmResolver;
-use path_clean::PathClean;
+
+use package_json::PackageJson;
 
 // WARNING: Ensure this is the only deno_std version reference as this
 // is automatically updated by the version bump workflow.
