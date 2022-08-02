@@ -401,7 +401,7 @@ fn get_resolved_package_version_and_info(
         .version_req
         .as_ref()
         .map(|v| format!("'{}'", v))
-        .unwrap_or("non pre-release".to_string()),
+        .unwrap_or("non-prerelease".to_string()),
       match parent {
         Some(id) => format!(" as specified in {}", id),
         None => String::new(),

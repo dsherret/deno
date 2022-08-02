@@ -246,12 +246,8 @@ pub fn node_resolve_binary_export(
     _ => bail!("package {} had non-implemented non-string property 'bin' -> '{}' in its package.json", package_id, bin_name),
   };
 
-  // todo(dsherret): reuse PackageJson here
   let url =
-    package_config_resolve_new(bin_entry, &package_folder, npm_resolver)
-      .with_context(|| {
-        format!("resolving package config for {}", package_id)
-      })?;
+    ModuleSpecifier::from_file_path(package_folder.join(bin_entry)).unwrap();
 
   let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
   // TODO(bartlomieju): skipped checking errors for commonJS resolution and
