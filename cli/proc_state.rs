@@ -23,7 +23,6 @@ use crate::graph_util::ModuleEntry;
 use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
-use crate::npm;
 use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
@@ -351,17 +350,6 @@ impl ProcState {
         specifier: &ModuleSpecifier,
         is_dynamic: bool,
       ) -> LoadFuture {
-        if specifier.scheme() == "npm" {
-          return Box::pin(futures::future::ready(
-            match npm::NpmPackageReference::from_specifier(&specifier) {
-              Ok(_) => Ok(Some(deno_graph::source::LoadResponse::External {
-                specifier: specifier.clone(),
-              })),
-              Err(err) => Err(err),
-            },
-          ));
-        }
-
         let graph_data = self.graph_data.read();
         let found_specifier = graph_data.follow_redirect(specifier);
         match graph_data.get(&found_specifier) {
@@ -637,19 +625,30 @@ impl ProcState {
         .map(|im| im.as_resolver())
     };
 
-    Ok(
-      create_graph(
-        roots,
-        false,
-        maybe_imports,
-        &mut cache,
-        maybe_resolver,
-        maybe_locker,
-        None,
-        None,
-      )
-      .await,
+    let graph = create_graph(
+      roots,
+      false,
+      maybe_imports,
+      &mut cache,
+      maybe_resolver,
+      maybe_locker,
+      None,
+      None,
     )
+    .await;
+
+    let mut package_reqs = Vec::new();
+    // todo(dsherret): .specifiers() should be an iterator
+    for (specifier, _) in graph.specifiers() {
+      if let Ok(reference) = NpmPackageReference::from_specifier(&specifier) {
+        package_reqs.push(reference.req);
+      }
+    }
+    if !package_reqs.is_empty() {
+      self.npm_resolver.add_package_reqs(package_reqs).await?;
+    }
+
+    Ok(graph)
   }
 }
 

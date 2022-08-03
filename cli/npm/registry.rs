@@ -38,7 +38,7 @@ pub struct NpmPackageVersionInfo {
 }
 
 impl NpmPackageVersionInfo {
-  pub fn dependencies_as_references(
+  pub fn dependencies_as_entries(
     &self,
   ) -> Result<Vec<NpmDependencyEntry>, AnyError> {
     fn entry_as_bare_specifier_and_reference(
@@ -50,7 +50,7 @@ impl NpmPackageVersionInfo {
           if let Some((name, version)) = package_and_version.rsplit_once('@') {
             (name.to_string(), version.to_string())
           } else {
-            bail!("could not find @ symbol in npm scheme url '{}'", entry.1);
+            bail!("could not find @ symbol in npm url '{}'", entry.1);
           }
         } else {
           (entry.0.clone(), entry.1.clone())

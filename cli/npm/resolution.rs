@@ -63,11 +63,7 @@ impl NpmPackageReference {
         name,
         match semver::VersionReq::parse(version_req) {
           Ok(v) => Some(v),
-          Err(err) => bail!(
-          "npm specifier must have a valid version requirement for '{}'.\n\n{}",
-          specifier,
-          err
-        ),
+          Err(_) => None, // not a version requirement
         },
       ),
       None => (specifier, None),
@@ -231,17 +227,15 @@ impl NpmResolution {
       let info = self.api.package_info(&package_ref.name).await?;
       let version_and_info =
         get_resolved_package_version_and_info(&package_ref, info, None)?;
-      let dependencies = version_and_info
-        .info
-        .dependencies_as_references()
-        .with_context(|| {
-          format!("Package: {}@{}", package_ref.name, version_and_info.version)
-        })?;
-
       let id = NpmPackageId {
         name: package_ref.name.clone(),
         version: version_and_info.version.clone(),
       };
+      let dependencies = version_and_info
+        .info
+        .dependencies_as_entries()
+        .with_context(|| format!("Package: {}", id))?;
+
       pending_dependencies.push_back((id.clone(), dependencies));
       snapshot.packages.insert(
         id.clone(),
@@ -286,7 +280,7 @@ impl NpmResolution {
             get_resolved_package_version_and_info(&dep.req, info, None)?;
           let dependencies = version_and_info
             .info
-            .dependencies_as_references()
+            .dependencies_as_entries()
             .with_context(|| {
               format!("Package: {}@{}", dep.req.name, version_and_info.version)
             })?;
@@ -395,7 +389,7 @@ fn get_resolved_package_version_and_info(
   match maybe_best_version {
     Some(v) => Ok(v),
     None => bail!(
-      "could not package '{}' matching {}{}",
+      "could not find package '{}' matching {}{}",
       package.name,
       package
         .version_req
