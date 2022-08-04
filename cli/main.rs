@@ -1115,6 +1115,7 @@ async fn run_command(
       ps.npm_resolver
         .add_package_reqs(vec![package_ref.req.clone()])
         .await?;
+      ps.npm_resolver.cache_packages().await?;
       let package_id = ps
         .npm_resolver
         .resolve_package_from_deno_module(&package_ref.req)?;

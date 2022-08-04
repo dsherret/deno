@@ -56,7 +56,10 @@ impl NpmPackageResolver {
     &self,
     packages: Vec<NpmPackageReq>,
   ) -> Result<(), AnyError> {
-    self.resolution.add_package_reqs(packages).await?;
+    self.resolution.add_package_reqs(packages).await
+  }
+
+  pub async fn cache_packages(&self) -> Result<(), AnyError> {
     // todo(dsherret): parallelize
     for package in self.resolution.all_packages() {
       self
