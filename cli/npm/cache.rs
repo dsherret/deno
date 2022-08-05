@@ -14,6 +14,8 @@ use super::tarball::verify_and_extract_tarball;
 use super::NpmPackageId;
 use super::NpmPackageVersionDistInfo;
 
+pub const NPM_PACKAGE_SYNC_LOCK_FILENAME: &str = ".deno_sync_lock";
+
 /// Stores a single copy of npm packages in a cache.
 #[derive(Clone)]
 pub struct NpmCache {
@@ -37,7 +39,11 @@ impl NpmCache {
     dist: &NpmPackageVersionDistInfo,
   ) -> Result<(), AnyError> {
     let package_folder = self.package_folder(id);
-    if package_folder.exists() {
+    if package_folder.exists()
+      // if this file exists, then the package didn't successfully extract
+      // the first time, or another process is currently extracting the zip file
+      && !package_folder.join(NPM_PACKAGE_SYNC_LOCK_FILENAME).exists()
+    {
       return Ok(());
     }
 
@@ -84,13 +90,19 @@ impl NpmCache {
   }
 
   pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
-    let name_parts = id.name.split('/');
+    self
+      .package_name_folder(&id.name)
+      .join(id.version.to_string())
+  }
+
+  pub fn package_name_folder(&self, name: &str) -> PathBuf {
+    let name_parts = name.split('/');
     let mut dir = self.root_dir.clone();
     // ensure backslashes are used on windows
     for part in name_parts {
       dir = dir.join(part);
     }
-    dir.join(id.version.to_string())
+    dir
   }
 
   pub fn get_package_from_specifier(

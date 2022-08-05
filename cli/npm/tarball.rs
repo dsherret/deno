@@ -1,12 +1,15 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
+use std::fs;
 use std::path::Path;
 
 use deno_core::anyhow::bail;
+use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
+use super::cache::NPM_PACKAGE_SYNC_LOCK_FILENAME;
 use super::registry::NpmPackageVersionDistInfo;
 use super::NpmPackageId;
 
@@ -25,7 +28,41 @@ pub fn verify_and_extract_tarball(
       package
     );
   }
-  extract_tarball(data, output_folder)
+
+  fs::create_dir_all(output_folder)
+    .with_context(|| format!("creating {}", output_folder.display()))?;
+
+  // This sync lock file is a way to ensure that partially created
+  // npm package directories aren't considered valid. This could maybe
+  // be a bit smarter in the future to not bother extracting here
+  // if another process has taken the lock in the past X seconds and
+  // wait for the other process to finish (it could try to create the
+  // file with `create_new(true)` then if it exists, check the metadata
+  // then wait until the other process finishes with a timeout), but
+  // for now this is good enough.
+  let sync_lock_path = output_folder.join(NPM_PACKAGE_SYNC_LOCK_FILENAME);
+  match fs::OpenOptions::new()
+    .write(true)
+    .create(true)
+    .open(&sync_lock_path)
+  {
+    Ok(_) => {
+      extract_tarball(data, output_folder)?;
+      // extraction succeeded, so only now delete this file
+      let _ignore = std::fs::remove_file(&sync_lock_path);
+      Ok(())
+    }
+    Err(err) => {
+      bail!(
+        concat!(
+          "Error creating package sync lock file at '{}'. ",
+          "Maybe try manually deleting this folder.\n\n{:#}",
+        ),
+        output_folder.display(),
+        err
+      );
+    }
+  }
 }
 
 fn verify_tarball_integrity(

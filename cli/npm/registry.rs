@@ -1,6 +1,8 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use deno_core::anyhow::bail;
@@ -11,12 +13,17 @@ use deno_core::serde::Deserialize;
 use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_runtime::deno_fetch::reqwest;
+use serde::Serialize;
 
+use crate::fs_util;
+use crate::http_cache::CACHE_PERM;
+
+use super::cache::NpmCache;
 use super::resolution::NpmPackageReq;
 
 // npm registry docs: https://github.com/npm/registry/blob/master/docs/REGISTRY-API.md
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct NpmPackageInfo {
   pub name: String,
   pub versions: HashMap<String, NpmPackageVersionInfo>,
@@ -27,7 +34,7 @@ pub struct NpmDependencyEntry {
   pub req: NpmPackageReq,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct NpmPackageVersionInfo {
   pub version: String,
   pub dist: NpmPackageVersionDistInfo,
@@ -74,7 +81,7 @@ impl NpmPackageVersionInfo {
   }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NpmPackageVersionDistInfo {
   /// URL to the tarball.
   pub tarball: String,
@@ -85,20 +92,26 @@ pub struct NpmPackageVersionDistInfo {
 #[derive(Clone)]
 pub struct NpmRegistryApi {
   base_url: Url,
-  cache: Arc<Mutex<HashMap<String, Option<NpmPackageInfo>>>>,
-}
-
-impl Default for NpmRegistryApi {
-  fn default() -> Self {
-    Self::from_base(Url::parse("https://registry.npmjs.org").unwrap())
-  }
+  cache: NpmCache,
+  mem_cache: Arc<Mutex<HashMap<String, Option<NpmPackageInfo>>>>,
+  reload: bool,
 }
 
 impl NpmRegistryApi {
-  pub fn from_base(base_url: Url) -> Self {
+  pub fn new(cache: NpmCache, reload: bool) -> Self {
+    Self::from_base(
+      Url::parse("https://registry.npmjs.org").unwrap(),
+      cache,
+      reload,
+    )
+  }
+
+  pub fn from_base(base_url: Url, cache: NpmCache, reload: bool) -> Self {
     Self {
       base_url,
-      cache: Default::default(),
+      cache,
+      mem_cache: Default::default(),
+      reload,
     }
   }
 
@@ -117,30 +130,83 @@ impl NpmRegistryApi {
     &self,
     name: &str,
   ) -> Result<Option<NpmPackageInfo>, AnyError> {
-    let maybe_info = self.cache.lock().get(name).cloned();
+    let maybe_info = self.mem_cache.lock().get(name).cloned();
     if let Some(info) = maybe_info {
       Ok(info)
     } else {
-      let maybe_package_info =
-        self.maybe_package_info_inner(name).await.with_context(|| {
+      let mut maybe_package_info = None;
+      if !self.reload {
+        // attempt to load from the file cache
+        maybe_package_info = self.load_file_cached_package_info(name);
+      }
+      if maybe_package_info.is_none() {
+        maybe_package_info = self
+          .load_package_info_from_registry(name)
+          .await
+          .with_context(|| {
           format!("Error getting response at {}", self.get_package_url(name))
         })?;
+      }
+
       // Not worth the complexity to ensure multiple in-flight requests
       // for the same package only request once because with how this is
-      // used that should never happen. If it does, not a big deal.
-      self
-        .cache
-        .lock()
-        .insert(name.to_string(), maybe_package_info.clone());
-      Ok(maybe_package_info)
+      // used that should never happen.
+      let mut mem_cache = self.mem_cache.lock();
+      Ok(match mem_cache.get(name) {
+        // another thread raced here, so use its result instead
+        Some(info) => info.clone(),
+        None => {
+          mem_cache.insert(name.to_string(), maybe_package_info.clone());
+          maybe_package_info
+        }
+      })
     }
   }
 
-  async fn maybe_package_info_inner(
+  fn load_file_cached_package_info(
+    &self,
+    name: &str,
+  ) -> Option<NpmPackageInfo> {
+    let file_cache_path = self.get_package_file_cache_path(name);
+    let file_text = fs::read_to_string(file_cache_path).ok()?;
+    match serde_json::from_str(&file_text) {
+      Ok(result) => Some(result),
+      Err(err) => {
+        if cfg!(debug_assertions) {
+          panic!("could not deserialize: {:#}", err);
+        } else {
+          None
+        }
+      }
+    }
+  }
+
+  fn save_package_info_to_file_cache(
+    &self,
+    name: &str,
+    package_info: &NpmPackageInfo,
+  ) {
+    let file_cache_path = self.get_package_file_cache_path(name);
+    let file_text = serde_json::to_string_pretty(&package_info).unwrap();
+    let _ignore =
+      fs_util::atomic_write_file(&file_cache_path, file_text, CACHE_PERM);
+  }
+
+  async fn load_package_info_from_registry(
     &self,
     name: &str,
   ) -> Result<Option<NpmPackageInfo>, AnyError> {
-    let response = reqwest::get(self.get_package_url(name)).await?;
+    let response = match reqwest::get(self.get_package_url(name)).await {
+      Ok(response) => response,
+      Err(err) => {
+        // attempt to use the local cache
+        if let Some(info) = self.load_file_cached_package_info(name) {
+          return Ok(Some(info));
+        } else {
+          return Err(err.into());
+        }
+      }
+    };
 
     if response.status() == 404 {
       Ok(None)
@@ -149,11 +215,17 @@ impl NpmRegistryApi {
     } else {
       let bytes = response.bytes().await?;
       let package_info = serde_json::from_slice(&bytes)?;
+      self.save_package_info_to_file_cache(name, &package_info);
       Ok(Some(package_info))
     }
   }
 
   fn get_package_url(&self, name: &str) -> Url {
     self.base_url.join(name).unwrap()
+  }
+
+  fn get_package_file_cache_path(&self, name: &str) -> PathBuf {
+    let name_folder_path = self.cache.package_name_folder(name);
+    name_folder_path.join("registry.json")
   }
 }

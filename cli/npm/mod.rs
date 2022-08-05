@@ -29,16 +29,16 @@ pub struct NpmPackageResolver {
 }
 
 impl NpmPackageResolver {
-  pub fn new(root_cache_dir: PathBuf) -> Self {
+  pub fn new(root_cache_dir: PathBuf, reload: bool) -> Self {
     let cache = NpmCache::new(root_cache_dir);
-    let api = NpmRegistryApi::default();
+    let api = NpmRegistryApi::new(cache.clone(), reload);
     let resolution = NpmResolution::new(api);
 
     Self { cache, resolution }
   }
 
-  pub fn from_deno_dir(dir: &DenoDir) -> Self {
-    Self::new(dir.root.join("npm"))
+  pub fn from_deno_dir(dir: &DenoDir, reload: bool) -> Self {
+    Self::new(dir.root.join("npm"), reload)
   }
 
   /// If the resolver has resolved any npm packages.

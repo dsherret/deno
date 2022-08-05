@@ -388,8 +388,20 @@ fn get_resolved_package_version_and_info(
 
   match maybe_best_version {
     Some(v) => Ok(v),
+    // If the package isn't found, it likely means that the user needs to use
+    // `--reload` to get the latest npm package information. Although it seems
+    // like we could make this smart by fetching the latest information for
+    // this package here, we really need a full restart. There could be very
+    // interesting bugs that occur if this package's version was resolved by
+    // something previous using the old information, then now being smart here
+    // causes a new fetch of the package information, meaning this time the
+    // previous resolution of this package's version resolved to an older
+    // version, but next time to a different version because it has new information.
     None => bail!(
-      "could not find package '{}' matching {}{}",
+      concat!(
+        "Could not find package '{}' matching {}{}. ",
+        "Try retreiving the latest npm package information by running with --reload",
+      ),
       package.name,
       package
         .version_req
