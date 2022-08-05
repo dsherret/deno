@@ -30,7 +30,7 @@ use package_json::PackageJson;
 
 // WARNING: Ensure this is the only deno_std version reference as this
 // is automatically updated by the version bump workflow.
-pub(crate) static STD_URL_STR: &str = "https://raw.githubusercontent.com/denoland/deno_std/3ea3c9fad88575bf1ff373e2bb9ebcea05d391a2/";
+pub(crate) static STD_URL_STR: &str = "https://deno.land/std@0.151.0/";
 
 static SUPPORTED_MODULES: &[&str] = &[
   "assert",
