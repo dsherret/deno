@@ -6,6 +6,7 @@ mod resolution;
 mod tarball;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use deno_ast::ModuleSpecifier;
 use deno_core::anyhow::bail;
@@ -14,7 +15,7 @@ use deno_core::error::AnyError;
 pub use resolution::NpmPackageId;
 pub use resolution::NpmPackageReference;
 pub use resolution::NpmPackageReq;
-pub use resolution::NpmResolutionSnapshot;
+pub use resolution::NpmResolutionPackage;
 
 use cache::NpmCache;
 use registry::NpmPackageVersionDistInfo;
@@ -23,16 +24,25 @@ use resolution::NpmResolution;
 
 use crate::deno_dir::DenoDir;
 
+#[derive(Clone)]
 pub struct NpmPackageResolver {
   cache: NpmCache,
-  resolution: NpmResolution,
+  resolution: Arc<NpmResolution>,
+}
+
+impl std::fmt::Debug for NpmPackageResolver {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("NpmPackageResolver")
+      .field("snapshot", &self.resolution.snapshot())
+      .finish()
+  }
 }
 
 impl NpmPackageResolver {
   pub fn new(root_cache_dir: PathBuf, reload: bool) -> Self {
     let cache = NpmCache::new(root_cache_dir);
     let api = NpmRegistryApi::new(cache.clone(), reload);
-    let resolution = NpmResolution::new(api);
+    let resolution = Arc::new(NpmResolution::new(api));
 
     Self { cache, resolution }
   }
@@ -46,10 +56,9 @@ impl NpmPackageResolver {
     self.resolution.has_packages()
   }
 
-  /// Creates a snapshot of the npm resolution for use
-  /// in the language server.
-  pub fn snapshot(&self) -> NpmResolutionSnapshot {
-    self.resolution.snapshot()
+  /// Gets all the packages.
+  pub fn all_packages(&self) -> Vec<NpmResolutionPackage> {
+    self.resolution.all_packages()
   }
 
   pub async fn add_package_reqs(

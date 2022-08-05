@@ -479,7 +479,7 @@ fn add_npm_packages_to_deno_info(
   }
 
   let mut packages = serde_json::Map::new();
-  for pkg in npm_resolver.snapshot().all_packages() {
+  for pkg in npm_resolver.all_packages() {
     let mut kv = serde_json::Map::new();
     kv.insert("name".to_string(), pkg.id.name.to_string().into());
     kv.insert("version".to_string(), pkg.id.version.to_string().into());
@@ -739,6 +739,7 @@ async fn create_graph_and_maybe_check(
         log_checks: true,
         reload: ps.options.reload_flag(),
       },
+      ps.npm_resolver.clone(),
     )?;
     debug!("{}", check_result.stats);
     if !check_result.diagnostics.is_empty() {

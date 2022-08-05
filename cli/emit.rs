@@ -16,6 +16,7 @@ use crate::colors;
 use crate::diagnostics::Diagnostics;
 use crate::graph_util::GraphData;
 use crate::graph_util::ModuleEntry;
+use crate::npm::NpmPackageResolver;
 use crate::tsc;
 use crate::version;
 
@@ -293,6 +294,7 @@ pub fn check(
   graph_data: Arc<RwLock<GraphData>>,
   cache: &TypeCheckCache,
   options: CheckOptions,
+  npm_resolver: NpmPackageResolver,
 ) -> Result<CheckResult, AnyError> {
   let check_js = options.ts_config.get_check_js();
   let segment_graph_data = {
@@ -343,6 +345,7 @@ pub fn check(
     maybe_config_specifier: options.maybe_config_specifier,
     maybe_tsbuildinfo,
     root_names,
+    npm_resolver,
   })?;
 
   let diagnostics = if options.type_check_mode == TypeCheckMode::Local {

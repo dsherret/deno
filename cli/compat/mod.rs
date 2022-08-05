@@ -24,6 +24,7 @@ pub use esm_resolver::check_if_should_use_esm_loader;
 pub use esm_resolver::node_resolve_binary_export;
 pub use esm_resolver::node_resolve_new;
 pub use esm_resolver::node_resolve_npm_reference_new;
+pub use esm_resolver::resolve_typescript_types;
 pub use esm_resolver::NodeEsmResolver;
 
 use package_json::PackageJson;

@@ -15,6 +15,7 @@ pub struct PackageJson {
   pub name: Option<String>,
   pub path: PathBuf,
   pub typ: String,
+  pub types: Option<String>,
 }
 
 impl PackageJson {
@@ -72,11 +73,18 @@ impl PackageJson {
       "none".to_string()
     };
 
+    // for typescript, it looks for "typings" first, then "types"
+    let types = package_json
+      .get("typings")
+      .or_else(|| package_json.get("types"))
+      .and_then(|t| t.as_str().map(|s| s.to_string()));
+
     let package_json = PackageJson {
       path,
       main,
       name,
       typ,
+      types,
       exports_map,
       imports,
       bin,

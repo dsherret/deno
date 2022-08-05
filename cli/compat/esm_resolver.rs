@@ -255,6 +255,32 @@ pub fn node_resolve_binary_export(
   Ok(resolve_response)
 }
 
+pub fn resolve_typescript_types(
+  package_id: &NpmPackageId,
+  path: Option<&str>,
+  npm_resolver: &NpmPackageResolver,
+) -> Result<Option<ResolveResponse>, AnyError> {
+  if path.is_some() {
+    todo!("not implemented");
+  }
+
+  let package_folder = npm_resolver.package_folder(&package_id);
+  let package_json_path = package_folder.join("package.json");
+  let package_json = PackageJson::load(package_json_path.clone())?;
+  let types_entry = match package_json.types {
+    Some(t) => t,
+    // todo: handle typescript resolution when this isn't set
+    None => return Ok(None),
+  };
+  let url =
+    ModuleSpecifier::from_file_path(package_folder.join(&types_entry)).unwrap();
+
+  let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
+  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
+  // "preserveSymlinksMain"/"preserveSymlinks" options.
+  Ok(Some(resolve_response))
+}
+
 pub fn node_resolve_npm_reference_new(
   reference: &NpmPackageReference,
   npm_resolver: &NpmPackageResolver,
