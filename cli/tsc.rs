@@ -7,6 +7,7 @@ use crate::diagnostics::Diagnostics;
 use crate::emit;
 use crate::graph_util::GraphData;
 use crate::graph_util::ModuleEntry;
+use crate::npm::GlobalNpmPackageResolver;
 use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 
@@ -252,7 +253,7 @@ pub struct Request {
   /// A vector of strings that represent the root/entry point modules for the
   /// program.
   pub root_names: Vec<(ModuleSpecifier, MediaType)>,
-  pub npm_resolver: NpmPackageResolver,
+  pub npm_resolver: GlobalNpmPackageResolver,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -274,7 +275,7 @@ struct State {
   maybe_response: Option<RespondArgs>,
   remapped_specifiers: HashMap<String, ModuleSpecifier>,
   root_map: HashMap<String, ModuleSpecifier>,
-  npm_resolver: NpmPackageResolver,
+  npm_resolver: GlobalNpmPackageResolver,
 }
 
 impl State {
@@ -285,7 +286,7 @@ impl State {
     maybe_tsbuildinfo: Option<String>,
     root_map: HashMap<String, ModuleSpecifier>,
     remapped_specifiers: HashMap<String, ModuleSpecifier>,
-    npm_resolver: NpmPackageResolver,
+    npm_resolver: GlobalNpmPackageResolver,
   ) -> Self {
     State {
       hash_data,
@@ -453,7 +454,7 @@ fn op_load(state: &mut OpState, args: Value) -> Result<Value, AnyError> {
       Some(Cow::Borrowed(code as &str))
     } else if state
       .npm_resolver
-      .get_package_from_specifier(&specifier)
+      .resolve_package_from_specifier(&specifier)
       .is_ok()
     {
       let file_path = specifier.to_file_path().unwrap();
@@ -505,20 +506,12 @@ fn op_resolve(
   for specifier in &args.specifiers {
     // handle npm:<package> urls
     if let Ok(npm_ref) = NpmPackageReference::from_str(specifier) {
-      let pkg = state
-        .npm_resolver
-        .resolve_package_from_deno_module(&npm_ref.req)?;
-      let maybe_response = compat::resolve_typescript_types(
-        &pkg,
-        npm_ref.sub_path.as_ref().map(|s| s.as_str()),
-        &state.npm_resolver,
-      )?;
-      let (media_type, specifier) =
-        maybe_response_to_media_type_and_specifier(maybe_response)?;
+      let (specifier, media_type) =
+        resolve_npm_package_reference_types(&npm_ref, &state.npm_resolver)?;
       resolved.push((
         specifier.to_string(),
         media_type.as_ts_extension().to_string(),
-      ))
+      ));
     } else if specifier.starts_with("asset:///") {
       resolved.push((
         specifier.clone(),
@@ -571,14 +564,14 @@ fn op_resolve(
         // handle an npm package
         if state
           .npm_resolver
-          .get_package_from_specifier(&referrer)
+          .resolve_package_from_specifier(&referrer)
           .is_ok()
         {
           let response =
             node_resolve_new(specifier, &referrer, &state.npm_resolver)?;
-          let (media_type, specifier) =
-            maybe_response_to_media_type_and_specifier(Some(response))?;
-          maybe_result = Some((specifier, media_type));
+          maybe_result = Some(maybe_node_response_to_media_type_and_specifier(
+            Some(response),
+          )?);
         }
       }
       let result = match maybe_result {
@@ -618,30 +611,42 @@ fn op_resolve(
   Ok(resolved)
 }
 
-fn maybe_response_to_media_type_and_specifier(
+pub fn resolve_npm_package_reference_types(
+  npm_ref: &NpmPackageReference,
+  npm_resolver: &dyn NpmPackageResolver,
+) -> Result<(ModuleSpecifier, MediaType), AnyError> {
+  let maybe_response = compat::resolve_typescript_types(
+    &npm_ref.req,
+    npm_ref.sub_path.as_ref().map(|s| s.as_str()),
+    npm_resolver,
+  )?;
+  maybe_node_response_to_media_type_and_specifier(maybe_response)
+}
+
+pub fn maybe_node_response_to_media_type_and_specifier(
   maybe_response: Option<ResolveResponse>,
-) -> Result<(MediaType, ModuleSpecifier), AnyError> {
+) -> Result<(ModuleSpecifier, MediaType), AnyError> {
   Ok(match maybe_response {
     Some(ResolveResponse::CommonJs(specifier)) => {
       let media_type = MediaType::from(&specifier);
       (
+        specifier,
         match media_type {
           MediaType::JavaScript | MediaType::Jsx => MediaType::Cjs,
           MediaType::TypeScript | MediaType::Tsx => MediaType::Cts,
           _ => media_type,
         },
-        specifier,
       )
     }
     Some(ResolveResponse::Esm(specifier)) => {
       let media_type = MediaType::from(&specifier);
       (
+        specifier,
         match media_type {
           MediaType::JavaScript | MediaType::Jsx => MediaType::Mjs,
           MediaType::TypeScript | MediaType::Tsx => MediaType::Mts,
           _ => media_type,
         },
-        specifier,
       )
     }
     maybe_response => {
@@ -651,7 +656,8 @@ fn maybe_response_to_media_type_and_specifier(
           ModuleSpecifier::parse("deno:///missing_dependency.d.ts").unwrap()
         }
       };
-      (MediaType::from(&specifier), specifier)
+      let media_type = MediaType::from(&specifier);
+      (specifier, media_type)
     }
   })
 }
@@ -834,7 +840,7 @@ mod tests {
       HashMap::new(),
       HashMap::new(),
       // todo(dsherret): use a temp deno dir for testing here
-      NpmPackageResolver::from_deno_dir(
+      GlobalNpmPackageResolver::from_deno_dir(
         &crate::deno_dir::DenoDir::new(None).unwrap(),
         false,
       ),
@@ -887,7 +893,7 @@ mod tests {
       maybe_tsbuildinfo: None,
       root_names: vec![(specifier.clone(), MediaType::TypeScript)],
       // todo(dsherret): use a temp deno dir for testing here
-      npm_resolver: NpmPackageResolver::from_deno_dir(
+      npm_resolver: GlobalNpmPackageResolver::from_deno_dir(
         &crate::deno_dir::DenoDir::new(None).unwrap(),
         false,
       ),
@@ -934,7 +940,7 @@ mod tests {
       "data:application/javascript,console.log(\"Hello%20Deno\");",
     )
     .unwrap();
-    assert_eq!(hash_url(&specifier, &MediaType::JavaScript), "data:///d300ea0796bd72b08df10348e0b70514c021f2e45bfe59cec24e12e97cd79c58.js");
+    assert_eq!(hash_url(&specifier, MediaType::JavaScript), "data:///d300ea0796bd72b08df10348e0b70514c021f2e45bfe59cec24e12e97cd79c58.js");
   }
 
   #[test]

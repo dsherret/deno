@@ -67,6 +67,8 @@ use crate::deno_dir;
 use crate::file_fetcher::get_source_from_data_url;
 use crate::fs_util;
 use crate::graph_util::graph_valid;
+use crate::npm::GlobalNpmPackageResolver;
+use crate::npm::NpmPackageResolverSnapshot;
 use crate::proc_state::import_map_from_text;
 use crate::proc_state::ProcState;
 use crate::tools::fmt::format_file;
@@ -86,6 +88,7 @@ pub struct StateSnapshot {
   pub documents: Documents,
   pub maybe_import_map: Option<Arc<ImportMap>>,
   pub root_uri: Option<Url>,
+  pub npm_resolver: NpmPackageResolverSnapshot,
 }
 
 pub struct Inner {
@@ -123,6 +126,8 @@ pub struct Inner {
   pub maybe_lint_config: Option<LintConfig>,
   /// A lazily create "server" for handling test run requests.
   maybe_testing_server: Option<testing::TestServer>,
+  /// Resolver for npm packages.
+  npm_resolver: GlobalNpmPackageResolver,
   /// A collection of measurements which instrument that performance of the LSP.
   performance: Arc<Performance>,
   /// A memoized version of fixable diagnostic codes retrieved from TypeScript.
@@ -241,6 +246,7 @@ impl Inner {
       ts_server.clone(),
     );
     let assets = Assets::new(ts_server.clone());
+    let npm_resolver = GlobalNpmPackageResolver::from_deno_dir(&dir, false);
 
     Self {
       assets,
@@ -258,6 +264,7 @@ impl Inner {
       maybe_testing_server: None,
       module_registries,
       module_registries_location,
+      npm_resolver,
       performance,
       ts_fixable_diagnostics: Default::default(),
       ts_server,
@@ -427,6 +434,7 @@ impl Inner {
       documents: self.documents.clone(),
       maybe_import_map: self.maybe_import_map.clone(),
       root_uri: self.config.root_uri.clone(),
+      npm_resolver: self.npm_resolver.snapshot(),
     })
   }
 
@@ -2809,11 +2817,12 @@ impl Inner {
     async fn create_graph_for_caching(
       cli_options: CliOptions,
       roots: Vec<(ModuleSpecifier, ModuleKind)>,
-    ) -> Result<(), AnyError> {
+    ) -> Result<GlobalNpmPackageResolver, AnyError> {
       let ps = ProcState::from_options(Arc::new(cli_options)).await?;
       let graph = ps.create_graph(roots).await?;
       graph_valid(&graph, true, false)?;
-      Ok(())
+      ps.npm_resolver.cache_packages().await?;
+      Ok(ps.npm_resolver.clone())
     }
 
     let referrer = self.url_map.normalize_url(&params.referrer.uri);
@@ -2856,8 +2865,13 @@ impl Inner {
         async move { create_graph_for_caching(cli_options, roots).await },
       )
     });
-    if let Err(err) = handle.await.unwrap() {
-      self.client.show_message(MessageType::WARNING, err).await;
+    match handle.await.unwrap() {
+      Ok(npm_resolver) => {
+        self.npm_resolver = npm_resolver;
+      }
+      Err(err) => {
+        self.client.show_message(MessageType::WARNING, err).await;
+      }
     }
 
     // Now that we have dependencies loaded, we need to re-analyze all the files.

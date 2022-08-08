@@ -4,6 +4,7 @@ use crate::compat;
 use crate::emit::emit_parsed_source;
 use crate::emit::TsTypeLib;
 use crate::graph_util::ModuleEntry;
+use crate::npm::NpmPackageResolver;
 use crate::proc_state::ProcState;
 use crate::text_encoding::code_without_source_map;
 use crate::text_encoding::source_map_from_code;
@@ -124,7 +125,7 @@ impl CliModuleLoader {
     let code_source = if self
       .ps
       .npm_resolver
-      .get_package_from_specifier(specifier)
+      .resolve_package_from_specifier(specifier)
       .is_ok()
     {
       let file_path = specifier.to_file_path().unwrap();
@@ -205,7 +206,7 @@ impl ModuleLoader for CliModuleLoader {
     if self
       .ps
       .npm_resolver
-      .get_package_from_specifier(specifier)
+      .resolve_package_from_specifier(specifier)
       .is_ok()
     {
       // nothing to prepare

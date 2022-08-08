@@ -101,6 +101,7 @@ use deno_runtime::worker::WorkerOptions;
 use deno_runtime::BootstrapOptions;
 use log::debug;
 use log::info;
+use npm::GlobalNpmPackageResolver;
 use npm::NpmPackageResolver;
 use std::env;
 use std::io::Read;
@@ -447,7 +448,7 @@ async fn compile_command(
 
 fn add_npm_packages_to_deno_info(
   json: &mut serde_json::Value,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &GlobalNpmPackageResolver,
 ) {
   let json = json.as_object_mut().unwrap();
   let modules = json.get_mut("modules").and_then(|m| m.as_array_mut());
@@ -467,7 +468,7 @@ fn add_npm_packages_to_deno_info(
                 {
                   dep.insert(
                     "npmPackage".to_string(),
-                    format!("{}", pkg).into(),
+                    format!("{}", pkg.id).into(),
                   );
                 }
               }
@@ -1117,11 +1118,8 @@ async fn run_command(
         .add_package_reqs(vec![package_ref.req.clone()])
         .await?;
       ps.npm_resolver.cache_packages().await?;
-      let package_id = ps
-        .npm_resolver
-        .resolve_package_from_deno_module(&package_ref.req)?;
       let resolve_response = compat::node_resolve_binary_export(
-        &package_id,
+        &package_ref.req,
         None,
         &ps.npm_resolver,
       )?;

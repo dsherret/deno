@@ -189,6 +189,15 @@ pub struct NpmResolution {
   update_sempahore: tokio::sync::Semaphore,
 }
 
+impl std::fmt::Debug for NpmResolution {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let snapshot = self.snapshot.read();
+    f.debug_struct("NpmResolution")
+      .field("snapshot", &snapshot)
+      .finish()
+  }
+}
+
 impl NpmResolution {
   pub fn new(api: NpmRegistryApi) -> Self {
     Self {

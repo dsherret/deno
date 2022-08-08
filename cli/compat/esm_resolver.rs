@@ -2,8 +2,8 @@
 
 use super::errors;
 use super::package_json::PackageJson;
-use crate::npm::NpmPackageId;
 use crate::npm::NpmPackageReference;
+use crate::npm::NpmPackageReq;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
 use deno_core::anyhow::bail;
@@ -159,7 +159,7 @@ fn node_resolve(
 pub fn node_resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ResolveResponse, AnyError> {
   // TODO(bartlomieju): skipped "policy" part as we don't plan to support it
 
@@ -207,43 +207,44 @@ pub fn node_resolve_new(
 }
 
 pub fn node_resolve_binary_export(
-  package_id: &NpmPackageId,
+  pkg_req: &NpmPackageReq,
   bin_name: Option<&str>,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ResolveResponse, AnyError> {
-  let package_folder = npm_resolver.package_folder(&package_id);
+  let pkg = npm_resolver.resolve_package_from_deno_module(&pkg_req)?;
+  let package_folder = pkg.folder_path;
   let package_json_path = package_folder.join("package.json");
   let package_json = PackageJson::load(package_json_path.clone())?;
   let bin = match &package_json.bin {
     Some(bin) => bin,
     None => bail!(
       "package {} did not have a 'bin' property in its package.json",
-      package_id
+      pkg.id
     ),
   };
-  let bin_name = bin_name.unwrap_or(&package_id.name);
+  let bin_name = bin_name.unwrap_or(&pkg_req.name);
   let bin_entry = match bin {
     Value::String(_) => {
-      if bin_name != package_id.name {
+      if bin_name != pkg_req.name {
         None
       } else {
         Some(bin)
       }
     }
     Value::Object(o) => o.get(bin_name),
-    _ => bail!("package {} did not have a 'bin' property with a string or object value in its package.json", package_id),
+    _ => bail!("package {} did not have a 'bin' property with a string or object value in its package.json", pkg.id),
   };
   let bin_entry = match bin_entry {
     Some(e) => e,
     None => bail!(
       "package {} did not have a 'bin' entry for {} in its package.json",
-      package_id,
+      pkg.id,
       bin_name,
     ),
   };
   let bin_entry = match bin_entry {
     Value::String(s) => s,
-    _ => bail!("package {} had non-implemented non-string property 'bin' -> '{}' in its package.json", package_id, bin_name),
+    _ => bail!("package {} had non-implemented non-string property 'bin' -> '{}' in its package.json", pkg.id, bin_name),
   };
 
   let url =
@@ -256,15 +257,17 @@ pub fn node_resolve_binary_export(
 }
 
 pub fn resolve_typescript_types(
-  package_id: &NpmPackageId,
+  pkg_req: &NpmPackageReq,
   path: Option<&str>,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<Option<ResolveResponse>, AnyError> {
   if path.is_some() {
-    todo!("not implemented");
+    todo!("npm paths are not currently implemented for type checking");
   }
 
-  let package_folder = npm_resolver.package_folder(&package_id);
+  let package_folder = npm_resolver
+    .resolve_package_from_deno_module(&pkg_req)?
+    .folder_path;
   let package_json_path = package_folder.join("package.json");
   let package_json = PackageJson::load(package_json_path.clone())?;
   let types_entry = match package_json.types {
@@ -283,13 +286,14 @@ pub fn resolve_typescript_types(
 
 pub fn node_resolve_npm_reference_new(
   reference: &NpmPackageReference,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ResolveResponse, AnyError> {
-  let package_id =
-    npm_resolver.resolve_package_from_deno_module(&reference.req)?;
+  let package_folder = npm_resolver
+    .resolve_package_from_deno_module(&reference.req)?
+    .folder_path;
   let url = package_config_resolve_new(
     reference.sub_path.as_deref().unwrap_or("."),
-    &npm_resolver.package_folder(&package_id),
+    &package_folder,
     npm_resolver,
   )
   .with_context(|| format!("resolving package config for {}", reference))?;
@@ -303,7 +307,7 @@ pub fn node_resolve_npm_reference_new(
 fn package_config_resolve_new(
   package_subpath: &str,
   package_dir: &PathBuf,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   let package_json_path = package_dir.join("package.json");
   // todo(dsherret): remove base from this code
@@ -336,7 +340,7 @@ fn package_config_resolve_new(
 
 fn url_to_resolve_response_new(
   url: ModuleSpecifier,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ResolveResponse, AnyError> {
   Ok(if url.as_str().starts_with("http") {
     ResolveResponse::Esm(url)
@@ -415,7 +419,7 @@ fn module_resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   let resolved = if should_be_treated_as_relative_or_absolute_path(specifier) {
     referrer.join(specifier)?
@@ -628,7 +632,7 @@ fn package_imports_resolve_new(
   name: &str,
   referrer: &ModuleSpecifier,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   if name == "#" || name.starts_with("#/") || name.ends_with('/') {
     let reason = "is not a valid internal imports specifier name";
@@ -890,7 +894,7 @@ fn resolve_package_target_string_new(
   pattern: bool,
   internal: bool,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   if !subpath.is_empty() && !pattern && !target.ends_with('/') {
     return Err(throw_invalid_package_target(
@@ -1096,7 +1100,7 @@ fn resolve_package_target_new(
   pattern: bool,
   internal: bool,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<Option<ModuleSpecifier>, AnyError> {
   if let Some(target) = target.as_str() {
     return Ok(Some(resolve_package_target_string_new(
@@ -1314,7 +1318,7 @@ fn package_exports_resolve_new(
   package_config: PackageConfig,
   base: &ModuleSpecifier,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   let exports = &package_config.exports.unwrap();
 
@@ -1517,7 +1521,7 @@ fn package_resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<ModuleSpecifier, AnyError> {
   let (package_name, package_subpath, _is_scoped) =
     parse_package_name(specifier, referrer)?;
@@ -1542,11 +1546,9 @@ fn package_resolve_new(
     }
   }
 
-  let referrer_package =
-    npm_resolver.get_package_from_specifier(referrer).unwrap();
-  let package = npm_resolver
-    .resolve_package_from_package(&package_name, &referrer_package)?;
-  let package_dir_path = npm_resolver.package_folder(&package);
+  let package_dir_path = npm_resolver
+    .resolve_package_from_package(&package_name, &referrer)?
+    .folder_path;
   let package_json_path = package_dir_path.join("package.json");
   let package_json_url =
     ModuleSpecifier::from_file_path(&package_json_path).unwrap();
@@ -1802,10 +1804,11 @@ fn get_package_scope_config(
 
 fn get_package_scope_config_new(
   referrer: &ModuleSpecifier,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<PackageConfig, AnyError> {
-  let npm_package = npm_resolver.get_package_from_specifier(&referrer).unwrap();
-  let root_folder = npm_resolver.package_folder(&npm_package);
+  let root_folder = npm_resolver
+    .resolve_package_from_specifier(&referrer)?
+    .folder_path;
   let package_json_path = root_folder.join("./package.json");
 
   let package_config =

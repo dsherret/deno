@@ -10,21 +10,36 @@ use deno_core::url::Url;
 use deno_runtime::colors;
 use deno_runtime::deno_fetch::reqwest;
 
+use crate::deno_dir::DenoDir;
+
 use super::tarball::verify_and_extract_tarball;
 use super::NpmPackageId;
 use super::NpmPackageVersionDistInfo;
 
 pub const NPM_PACKAGE_SYNC_LOCK_FILENAME: &str = ".deno_sync_lock";
 
-/// Stores a single copy of npm packages in a cache.
-#[derive(Clone)]
-pub struct NpmCache {
+#[derive(Clone, Debug)]
+pub struct ReadonlyNpmCache {
   root_dir: PathBuf,
   // cached url representation of the root directory
   root_dir_url: Url,
 }
 
-impl NpmCache {
+// todo(dsherret): implementing Default for this is error prone because someone
+// might accidentally use the default implementation instead of getting the
+// correct location of the deno dir, which might be provided via a CLI argument.
+// That said, the rest of the LSP code does this at the moment and so this code
+// copies that.
+impl Default for ReadonlyNpmCache {
+  fn default() -> Self {
+    // This only gets used when creating the tsc runtime and for testing, and so
+    // it shouldn't ever actually access the DenoDir, so it doesn't support a
+    // custom root.
+    Self::from_deno_dir(&crate::deno_dir::DenoDir::new(None).unwrap())
+  }
+}
+
+impl ReadonlyNpmCache {
   pub fn new(root_dir: PathBuf) -> Self {
     let root_dir_url = Url::from_directory_path(&root_dir).unwrap();
     Self {
@@ -33,12 +48,87 @@ impl NpmCache {
     }
   }
 
+  pub fn from_deno_dir(dir: &DenoDir) -> Self {
+    Self::new(dir.root.join("npm"))
+  }
+
+  pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
+    self
+      .package_name_folder(&id.name)
+      .join(id.version.to_string())
+  }
+
+  pub fn package_name_folder(&self, name: &str) -> PathBuf {
+    let name_parts = name.split('/');
+    let mut dir = self.root_dir.clone();
+    // ensure backslashes are used on windows
+    for part in name_parts {
+      dir = dir.join(part);
+    }
+    dir
+  }
+
+  pub fn resolve_package_id_from_specifier(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Result<NpmPackageId, AnyError> {
+    match self.maybe_resolve_package_id_from_specifier(specifier) {
+      Some(id) => Ok(id),
+      None => bail!("could not find npm package for '{}'", specifier),
+    }
+  }
+
+  fn maybe_resolve_package_id_from_specifier(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Option<NpmPackageId> {
+    let relative_url = self.root_dir_url.make_relative(specifier)?;
+    if relative_url.starts_with("../") {
+      return None;
+    }
+
+    // examples:
+    // * chalk/5.0.1/package
+    // * @types/chalk/5.0.1/package
+    let mut parts = relative_url
+      .split('/')
+      .enumerate()
+      .take_while(|(i, part)| *i < 2 || *part != "package")
+      .map(|(_, part)| part)
+      .collect::<Vec<_>>();
+    let version = parts.pop().unwrap();
+    let name = parts.join("/");
+
+    Some(NpmPackageId {
+      name,
+      version: semver::Version::parse(version).unwrap(),
+    })
+  }
+}
+
+/// Stores a single copy of npm packages in a cache.
+#[derive(Clone, Debug)]
+pub struct NpmCache(ReadonlyNpmCache);
+
+impl NpmCache {
+  pub fn new(root_dir: PathBuf) -> Self {
+    Self(ReadonlyNpmCache::new(root_dir))
+  }
+
+  pub fn from_deno_dir(dir: &DenoDir) -> Self {
+    Self(ReadonlyNpmCache::from_deno_dir(dir))
+  }
+
+  pub fn as_readonly(&self) -> ReadonlyNpmCache {
+    self.0.clone()
+  }
+
   pub async fn ensure_package(
     &self,
     id: &NpmPackageId,
     dist: &NpmPackageVersionDistInfo,
   ) -> Result<(), AnyError> {
-    let package_folder = self.package_folder(id);
+    let package_folder = self.0.package_folder(id);
     if package_folder.exists()
       // if this file exists, then the package didn't successfully extract
       // the first time, or another process is currently extracting the zip file
@@ -90,45 +180,17 @@ impl NpmCache {
   }
 
   pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
-    self
-      .package_name_folder(&id.name)
-      .join(id.version.to_string())
+    self.0.package_folder(id)
   }
 
   pub fn package_name_folder(&self, name: &str) -> PathBuf {
-    let name_parts = name.split('/');
-    let mut dir = self.root_dir.clone();
-    // ensure backslashes are used on windows
-    for part in name_parts {
-      dir = dir.join(part);
-    }
-    dir
+    self.0.package_name_folder(name)
   }
 
-  pub fn get_package_from_specifier(
+  pub fn resolve_package_id_from_specifier(
     &self,
     specifier: &ModuleSpecifier,
-  ) -> Option<NpmPackageId> {
-    let relative_url = self.root_dir_url.make_relative(specifier)?;
-    if relative_url.starts_with("../") {
-      return None;
-    }
-
-    // examples:
-    // * chalk/5.0.1/package
-    // * @types/chalk/5.0.1/package
-    let mut parts = relative_url
-      .split('/')
-      .enumerate()
-      .take_while(|(i, part)| *i < 2 || *part != "package")
-      .map(|(_, part)| part)
-      .collect::<Vec<_>>();
-    let version = parts.pop().unwrap();
-    let name = parts.join("/");
-
-    Some(NpmPackageId {
-      name,
-      version: semver::Version::parse(version).unwrap(),
-    })
+  ) -> Result<NpmPackageId, AnyError> {
+    self.0.resolve_package_id_from_specifier(specifier)
   }
 }

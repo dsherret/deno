@@ -23,6 +23,7 @@ use crate::graph_util::ModuleEntry;
 use crate::http_cache;
 use crate::lockfile::as_maybe_locker;
 use crate::lockfile::Lockfile;
+use crate::npm::GlobalNpmPackageResolver;
 use crate::npm::NpmPackageReference;
 use crate::npm::NpmPackageResolver;
 use crate::resolver::ImportMapResolver;
@@ -84,7 +85,7 @@ pub struct Inner {
   pub compiled_wasm_module_store: CompiledWasmModuleStore,
   maybe_resolver: Option<Arc<dyn deno_graph::source::Resolver + Send + Sync>>,
   maybe_file_watcher_reporter: Option<FileWatcherReporter>,
-  pub npm_resolver: NpmPackageResolver,
+  pub npm_resolver: GlobalNpmPackageResolver,
   pub cjs_resolutions: Mutex<HashSet<ModuleSpecifier>>,
 }
 
@@ -223,7 +224,7 @@ impl ProcState {
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
     let npm_resolver =
-      NpmPackageResolver::from_deno_dir(&dir, cli_options.reload_flag());
+      GlobalNpmPackageResolver::from_deno_dir(&dir, cli_options.reload_flag());
 
     Ok(ProcState(Arc::new(Inner {
       dir,
@@ -528,7 +529,7 @@ impl ProcState {
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
       if self
         .npm_resolver
-        .get_package_from_specifier(&referrer)
+        .resolve_package_from_specifier(&referrer)
         .is_ok()
       {
         // we're in an npm package, so use node resolution

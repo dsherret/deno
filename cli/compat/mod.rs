@@ -287,7 +287,7 @@ pub fn translate_cjs_to_esm_new(
   specifier: &ModuleSpecifier,
   code: String,
   media_type: MediaType,
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<String, AnyError> {
   let parsed_source = deno_ast::parse_script(deno_ast::ParseParams {
     specifier: specifier.to_string(),
@@ -379,7 +379,7 @@ fn resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
   conditions: &[&str],
-  npm_resolver: &NpmPackageResolver,
+  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<PathBuf, AnyError> {
   if specifier.starts_with('/') {
     todo!();
@@ -398,13 +398,11 @@ fn resolve_new(
 
   let (package_name, package_subpath) = parse_specifier(specifier).unwrap();
 
-  let referrer_package_id =
-    npm_resolver.get_package_from_specifier(referrer)?;
   // todo(dsherret): use not_found error on not found here
-  let package_id = npm_resolver
-    .resolve_package_from_package(&package_name, &referrer_package_id)?;
+  let module_dir = npm_resolver
+    .resolve_package_from_specifier(referrer)?
+    .folder_path;
 
-  let module_dir = npm_resolver.package_folder(&package_id);
   let package_json_path = module_dir.join("package.json");
   if package_json_path.exists() {
     let package_json = PackageJson::load(package_json_path)?;

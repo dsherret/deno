@@ -19,8 +19,11 @@ use super::urls::LspUrlMap;
 use super::urls::INVALID_SPECIFIER;
 
 use crate::args::TsConfig;
+use crate::compat::node_resolve_new;
 use crate::fs_util::specifier_to_file_path;
+use crate::npm::NpmPackageResolver;
 use crate::tsc;
+use crate::tsc::maybe_node_response_to_media_type_and_specifier;
 use crate::tsc::ResolveArgs;
 
 use deno_core::anyhow::anyhow;
@@ -2651,33 +2654,61 @@ fn op_resolve(
 ) -> Result<Vec<Option<(String, String)>>, AnyError> {
   let state = state.borrow_mut::<State>();
   let mark = state.performance.mark("op_resolve", Some(&args));
+  let result = op_resolve_inner(state, args);
+  state.performance.measure(mark);
+  result
+}
+
+fn op_resolve_inner(
+  state: &mut State,
+  args: ResolveArgs,
+) -> Result<Vec<Option<(String, String)>>, AnyError> {
   let referrer = state.normalize_specifier(&args.base)?;
 
-  let result = if let Some(resolved) = state
+  // handle resolution coming from an npm package
+  let results = if state
     .state_snapshot
-    .documents
-    .resolve(args.specifiers, &referrer)
+    .npm_resolver
+    .resolve_package_from_specifier(&referrer)
+    .is_ok()
   {
-    Ok(
-      resolved
-        .into_iter()
-        .map(|o| {
-          o.map(|(s, mt)| (s.to_string(), mt.as_ts_extension().to_string()))
-        })
-        .collect(),
-    )
+    args
+      .specifiers
+      .iter()
+      .map(|specifier| {
+        let maybe_response = node_resolve_new(
+          specifier,
+          &referrer,
+          &state.state_snapshot.npm_resolver,
+        )
+        .ok();
+        maybe_node_response_to_media_type_and_specifier(maybe_response).ok()
+      })
+      .collect::<Vec<_>>()
+  } else if let Some(resolved) = state.state_snapshot.documents.resolve(
+    args.specifiers,
+    &referrer,
+    &state.state_snapshot.npm_resolver,
+  ) {
+    resolved
   } else {
-    Err(custom_error(
+    return Err(custom_error(
       "NotFound",
       format!(
         "Error resolving. Referring specifier \"{}\" was not found.",
         args.base
       ),
-    ))
+    ));
   };
 
-  state.performance.measure(mark);
-  result
+  Ok(
+    results
+      .into_iter()
+      .map(|o| {
+        o.map(|(s, mt)| (s.to_string(), mt.as_ts_extension().to_string()))
+      })
+      .collect(),
+  )
 }
 
 #[op]
