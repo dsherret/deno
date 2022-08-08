@@ -19,7 +19,7 @@ use crate::fs_util;
 use crate::http_cache::CACHE_PERM;
 
 use super::cache::NpmCache;
-use super::resolution::NpmPackageReq;
+use super::resolution::NpmVersionMatcher;
 
 // npm registry docs: https://github.com/npm/registry/blob/master/docs/REGISTRY-API.md
 
@@ -31,7 +31,8 @@ pub struct NpmPackageInfo {
 
 pub struct NpmDependencyEntry {
   pub bare_specifier: String,
-  pub req: NpmPackageReq,
+  pub name: String,
+  pub version_req: NpmVersionReq,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -62,14 +63,12 @@ impl NpmPackageVersionInfo {
         } else {
           (entry.0.clone(), entry.1.clone())
         };
-      let version_req = semver::VersionReq::parse(&version_req)
+      let version_req = NpmVersionReq::parse(&version_req)
         .with_context(|| format!("Dependency: {}", bare_specifier))?;
       Ok(NpmDependencyEntry {
         bare_specifier,
-        req: NpmPackageReq {
-          name,
-          version_req: Some(version_req),
-        },
+        name,
+        version_req,
       })
     }
 
@@ -227,5 +226,82 @@ impl NpmRegistryApi {
   fn get_package_file_cache_path(&self, name: &str) -> PathBuf {
     let name_folder_path = self.cache.package_name_folder(name);
     name_folder_path.join("registry.json")
+  }
+}
+
+pub struct NpmVersionReq {
+  raw_text: String,
+  comparators: Vec<semver::VersionReq>,
+}
+
+impl NpmVersionReq {
+  pub fn parse(text: &str) -> Result<NpmVersionReq, AnyError> {
+    let raw_text = text.to_string();
+    // hacky—we should improve this
+    let part_texts = text.split("||").collect::<Vec<_>>();
+    let mut comparators = Vec::with_capacity(part_texts.len());
+    for part in part_texts {
+      comparators.push(npm_version_req_parse_part(&part)?);
+    }
+    Ok(NpmVersionReq {
+      raw_text,
+      comparators,
+    })
+  }
+}
+
+impl NpmVersionMatcher for NpmVersionReq {
+  fn matches(&self, version: &semver::Version) -> bool {
+    self.comparators.iter().any(|c| c.matches(version))
+  }
+
+  fn version_text(&self) -> String {
+    self.raw_text.to_string()
+  }
+}
+
+fn npm_version_req_parse_part(
+  text: &str,
+) -> Result<semver::VersionReq, AnyError> {
+  let text = text.trim();
+  let mut chars = text.chars().enumerate().peekable();
+  let mut final_text = String::new();
+  while chars.peek().is_some() {
+    let (i, c) = chars.next().unwrap();
+    let is_greater_or_less_than = c == '<' || c == '>';
+    if is_greater_or_less_than || c == '=' {
+      if i > 0 {
+        final_text = final_text.trim().to_string();
+        // add a comma to make semver::VersionReq parse this
+        final_text.push(',');
+      }
+      final_text.push(c);
+      let next_char = chars.peek().map(|(_, c)| c);
+      if is_greater_or_less_than && matches!(next_char, Some('=')) {
+        let c = chars.next().unwrap().1; // skip
+        final_text.push(c);
+      }
+    } else {
+      final_text.push(c);
+    }
+  }
+  Ok(semver::VersionReq::parse(&final_text)?)
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+
+  #[test]
+  pub fn npm_version_req_ranges() {
+    // todo(dsherret): use a macro here and add more tests
+    let version_req = NpmVersionReq::parse(">= 2.1.2 < 3.0.0 || 5.x").unwrap();
+    assert!(!version_req.matches(&semver::Version::parse("2.1.1").unwrap()));
+    assert!(version_req.matches(&semver::Version::parse("2.1.2").unwrap()));
+    assert!(version_req.matches(&semver::Version::parse("2.9.9").unwrap()));
+    assert!(!version_req.matches(&semver::Version::parse("3.0.0").unwrap()));
+    assert!(version_req.matches(&semver::Version::parse("5.0.0").unwrap()));
+    assert!(version_req.matches(&semver::Version::parse("5.1.0").unwrap()));
+    assert!(!version_req.matches(&semver::Version::parse("6.1.0").unwrap()));
   }
 }

@@ -2870,7 +2870,11 @@ impl Inner {
         self.npm_resolver = npm_resolver;
       }
       Err(err) => {
-        self.client.show_message(MessageType::WARNING, err).await;
+        log::warn!("Error caching. {:#}", err);
+        self
+          .client
+          .show_message(MessageType::WARNING, format!("Error caching. {}", err))
+          .await;
       }
     }
 

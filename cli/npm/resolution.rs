@@ -14,6 +14,13 @@ use super::registry::NpmPackageVersionDistInfo;
 use super::registry::NpmPackageVersionInfo;
 use super::registry::NpmRegistryApi;
 
+/// The version matcher used for npm schemed urls is more strict than
+/// the one used by npm packages.
+pub trait NpmVersionMatcher {
+  fn matches(&self, version: &semver::Version) -> bool;
+  fn version_text(&self) -> String;
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct NpmPackageReference {
   pub req: NpmPackageReq,
@@ -35,12 +42,20 @@ impl std::fmt::Display for NpmPackageReq {
   }
 }
 
-impl NpmPackageReq {
-  pub fn matches(&self, version: &semver::Version) -> bool {
+impl NpmVersionMatcher for NpmPackageReq {
+  fn matches(&self, version: &semver::Version) -> bool {
     match &self.version_req {
       Some(req) => req.matches(version),
       None => version.pre.is_empty(),
     }
+  }
+
+  fn version_text(&self) -> String {
+    self
+      .version_req
+      .as_ref()
+      .map(|v| format!("{}", v))
+      .unwrap_or_else(|| "non-prerelease".to_string())
   }
 }
 
@@ -163,12 +178,13 @@ impl NpmResolutionSnapshot {
 
   pub fn resolve_best_package_version(
     &self,
-    package: &NpmPackageReq,
+    name: &str,
+    version_matcher: &impl NpmVersionMatcher,
   ) -> Option<semver::Version> {
     let mut maybe_best_version: Option<&semver::Version> = None;
-    if let Some(versions) = self.packages_by_name.get(&package.name) {
+    if let Some(versions) = self.packages_by_name.get(name) {
       for version in versions {
-        if package.matches(version) {
+        if version_matcher.matches(version) {
           let is_best_version = maybe_best_version
             .as_ref()
             .map(|best_version| (*best_version).cmp(version).is_lt())
@@ -226,7 +242,8 @@ impl NpmResolution {
         continue;
       }
       // inspect the list of current packages
-      if let Some(version) = snapshot.resolve_best_package_version(&package_ref)
+      if let Some(version) =
+        snapshot.resolve_best_package_version(&package_ref.name, &package_ref)
       {
         snapshot.package_reqs.insert(package_ref, version);
         continue; // done, no need to continue
@@ -234,8 +251,12 @@ impl NpmResolution {
 
       // no existing best version, so resolve the current packages
       let info = self.api.package_info(&package_ref.name).await?;
-      let version_and_info =
-        get_resolved_package_version_and_info(&package_ref, info, None)?;
+      let version_and_info = get_resolved_package_version_and_info(
+        &package_ref.name,
+        &package_ref,
+        info,
+        None,
+      )?;
       let id = NpmPackageId {
         name: package_ref.name.clone(),
         version: version_and_info.version.clone(),
@@ -276,26 +297,30 @@ impl NpmResolution {
       for dep in deps {
         // check if an existing dependency matches this
         let id = if let Some(version) =
-          snapshot.resolve_best_package_version(&dep.req)
+          snapshot.resolve_best_package_version(&dep.name, &dep.version_req)
         {
           NpmPackageId {
-            name: dep.req.name.clone(),
+            name: dep.name.clone(),
             version,
           }
         } else {
           // get the information
-          let info = self.api.package_info(&dep.req.name).await?;
-          let version_and_info =
-            get_resolved_package_version_and_info(&dep.req, info, None)?;
+          let info = self.api.package_info(&dep.name).await?;
+          let version_and_info = get_resolved_package_version_and_info(
+            &dep.name,
+            &dep.version_req,
+            info,
+            None,
+          )?;
           let dependencies = version_and_info
             .info
             .dependencies_as_entries()
             .with_context(|| {
-              format!("Package: {}@{}", dep.req.name, version_and_info.version)
+              format!("Package: {}@{}", dep.name, version_and_info.version)
             })?;
 
           let id = NpmPackageId {
-            name: dep.req.name.clone(),
+            name: dep.name.clone(),
             version: version_and_info.version.clone(),
           };
           pending_dependencies.push_back((id.clone(), dependencies));
@@ -309,7 +334,7 @@ impl NpmResolution {
           );
           snapshot
             .packages_by_name
-            .entry(dep.req.name.clone())
+            .entry(dep.name.clone())
             .or_default()
             .push(id.version.clone());
 
@@ -374,14 +399,15 @@ struct VersionAndInfo {
 }
 
 fn get_resolved_package_version_and_info(
-  package: &NpmPackageReq,
+  pkg_name: &str,
+  version_matcher: &impl NpmVersionMatcher,
   info: NpmPackageInfo,
   parent: Option<&NpmPackageId>,
 ) -> Result<VersionAndInfo, AnyError> {
   let mut maybe_best_version: Option<VersionAndInfo> = None;
   for (_, version_info) in info.versions.into_iter() {
     let version = semver::Version::parse(&version_info.version)?;
-    if package.matches(&version) {
+    if version_matcher.matches(&version) {
       let is_best_version = maybe_best_version
         .as_ref()
         .map(|best_version| best_version.version.cmp(&version).is_lt())
@@ -411,12 +437,8 @@ fn get_resolved_package_version_and_info(
         "Could not find package '{}' matching {}{}. ",
         "Try retreiving the latest npm package information by running with --reload",
       ),
-      package.name,
-      package
-        .version_req
-        .as_ref()
-        .map(|v| format!("'{}'", v))
-        .unwrap_or("non-prerelease".to_string()),
+      pkg_name,
+      version_matcher.version_text(),
       match parent {
         Some(id) => format!(" as specified in {}", id),
         None => String::new(),
