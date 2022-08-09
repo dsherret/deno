@@ -1202,10 +1202,11 @@ async fn run_command(
           )?;
         }
       } else {
-        // todo(dsherret): this is a temporary solution that we should remove
+        // todo(dsherret): ideally we shouldn't create globals here
         if ps.npm_resolver.has_packages() {
           worker.execute_side_module(&compat::GLOBAL_URL).await?;
           worker.execute_side_module(&compat::MODULE_URL).await?;
+          compat::load_builtin_node_modules(&mut worker.js_runtime).await?;
         }
         // Regular ES module execution
         worker.execute_main_module(&main_module).await?;
