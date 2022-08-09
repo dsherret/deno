@@ -17,6 +17,7 @@ use deno_core::url::Url;
 use deno_core::ModuleSpecifier;
 use deno_graph::source::ResolveResponse;
 use deno_graph::source::Resolver;
+use path_clean::PathClean;
 use regex::Regex;
 use std::path::Path;
 use std::path::PathBuf;
@@ -155,22 +156,29 @@ fn node_resolve(
   Ok(resolve_response)
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub enum ResolutionMode {
+  Execution,
+  Types,
+}
+
 /// This function is an implementation of `defaultResolve` in
 /// `lib/internal/modules/esm/resolve.js` from Node.
 pub fn node_resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
   npm_resolver: &dyn NpmPackageResolver,
-) -> Result<ResolveResponse, AnyError> {
+  mode: ResolutionMode,
+) -> Result<Option<ResolveResponse>, AnyError> {
   // TODO(bartlomieju): skipped "policy" part as we don't plan to support it
 
   if let Some(resolved) = crate::compat::try_resolve_builtin_module(specifier) {
-    return Ok(ResolveResponse::Esm(resolved));
+    return Ok(Some(ResolveResponse::Esm(resolved)));
   }
 
   if let Ok(url) = Url::parse(specifier) {
     if url.scheme() == "data" {
-      return Ok(ResolveResponse::Specifier(url));
+      return Ok(Some(ResolveResponse::Specifier(url)));
     }
 
     let protocol = url.scheme();
@@ -181,7 +189,7 @@ pub fn node_resolve_new(
       if let Some(resolved) =
         crate::compat::try_resolve_builtin_module(&specifier)
       {
-        return Ok(ResolveResponse::Esm(resolved));
+        return Ok(Some(ResolveResponse::Esm(resolved)));
       } else {
         return Err(generic_error(format!("Unknown module {}", specifier)));
       }
@@ -194,17 +202,22 @@ pub fn node_resolve_new(
     // todo(THIS PR): I think this is handled upstream so can be removed?
     if referrer.scheme() == "data" {
       let url = referrer.join(specifier).map_err(AnyError::from)?;
-      return Ok(ResolveResponse::Specifier(url));
+      return Ok(Some(ResolveResponse::Specifier(url)));
     }
   }
 
   let conditions = DEFAULT_CONDITIONS;
-  let url = module_resolve_new(specifier, referrer, conditions, npm_resolver)?;
+  let url =
+    module_resolve_new(specifier, referrer, conditions, npm_resolver, mode)?;
+  let url = match url {
+    Some(url) => url,
+    None => return Ok(None),
+  };
 
   let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
   // TODO(bartlomieju): skipped checking errors for commonJS resolution and
   // "preserveSymlinksMain"/"preserveSymlinks" options.
-  Ok(resolve_response)
+  Ok(Some(resolve_response))
 }
 
 pub fn node_resolve_binary_export(
@@ -257,11 +270,11 @@ pub fn node_resolve_binary_export(
   Ok(resolve_response)
 }
 
-pub fn resolve_typescript_types(
+fn package_config_types_resolve(
   package_folder: &Path,
   path: Option<&str>,
   npm_resolver: &dyn NpmPackageResolver,
-) -> Result<Option<ResolveResponse>, AnyError> {
+) -> Result<Option<ModuleSpecifier>, AnyError> {
   if path.is_some() {
     todo!("npm paths are not currently implemented for type checking");
   }
@@ -275,31 +288,42 @@ pub fn resolve_typescript_types(
   };
   let url =
     ModuleSpecifier::from_file_path(package_folder.join(&types_entry)).unwrap();
-
-  let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
-  // TODO(bartlomieju): skipped checking errors for commonJS resolution and
-  // "preserveSymlinksMain"/"preserveSymlinks" options.
-  Ok(Some(resolve_response))
+  Ok(Some(url))
 }
 
 pub fn node_resolve_npm_reference_new(
   reference: &NpmPackageReference,
   npm_resolver: &dyn NpmPackageResolver,
-) -> Result<ResolveResponse, AnyError> {
+  mode: ResolutionMode,
+) -> Result<Option<ResolveResponse>, AnyError> {
   let package_folder = npm_resolver
     .resolve_package_from_deno_module(&reference.req)?
     .folder_path;
-  let url = package_config_resolve_new(
-    reference.sub_path.as_deref().unwrap_or("."),
-    &package_folder,
-    npm_resolver,
-  )
-  .with_context(|| format!("resolving package config for {}", reference))?;
+  let maybe_url = match mode {
+    ResolutionMode::Execution => package_config_resolve_new(
+      reference.sub_path.as_deref().unwrap_or("."),
+      &package_folder,
+      npm_resolver,
+    )
+    .map(Some)
+    .with_context(|| {
+      format!("Error resolving package config for '{}'.", reference)
+    })?,
+    ResolutionMode::Types => package_config_types_resolve(
+      &package_folder,
+      reference.sub_path.as_deref(),
+      npm_resolver,
+    )?,
+  };
+  let url = match maybe_url {
+    Some(url) => url,
+    None => return Ok(None),
+  };
 
   let resolve_response = url_to_resolve_response_new(url, npm_resolver)?;
   // TODO(bartlomieju): skipped checking errors for commonJS resolution and
   // "preserveSymlinksMain"/"preserveSymlinks" options.
-  Ok(resolve_response)
+  Ok(Some(resolve_response))
 }
 
 fn package_config_resolve_new(
@@ -413,22 +437,80 @@ fn module_resolve(
   finalize_resolution(resolved, base)
 }
 
+const KNOWN_EXTENSIONS: [&str; 7] =
+  ["js", "mjs", "cjs", "ts", "d.ts", "cts", "mts"];
+const TYPES_EXTENSIONS: [&str; 2] = ["ts", "d.ts"];
+
+fn types_extension_probe(mut p: PathBuf) -> Result<PathBuf, AnyError> {
+  if p.exists() {
+    Ok(p.clean())
+  } else {
+    if let Some(ext) = p.extension() {
+      if !KNOWN_EXTENSIONS.contains(&ext.to_string_lossy().as_ref()) {
+        // give the file a known extension to replace
+        p.set_file_name(format!(
+          "{}.js",
+          p.file_name().unwrap().to_string_lossy()
+        ));
+      }
+    }
+    for ext in TYPES_EXTENSIONS {
+      let p = p.with_extension(ext);
+      if p.exists() {
+        return Ok(p.clean());
+      }
+    }
+    bail!("Did not find '{}'.", p.display())
+  }
+}
+
 fn module_resolve_new(
   specifier: &str,
   referrer: &ModuleSpecifier,
   conditions: &[&str],
   npm_resolver: &dyn NpmPackageResolver,
-) -> Result<ModuleSpecifier, AnyError> {
-  let resolved = if should_be_treated_as_relative_or_absolute_path(specifier) {
-    referrer.join(specifier)?
+  mode: ResolutionMode,
+) -> Result<Option<ModuleSpecifier>, AnyError> {
+  let url = if should_be_treated_as_relative_or_absolute_path(specifier) {
+    let resolved_specifier = referrer.join(specifier)?;
+    match mode {
+      ResolutionMode::Execution => Some(resolved_specifier),
+      ResolutionMode::Types => {
+        let path =
+          types_extension_probe(resolved_specifier.to_file_path().unwrap())?;
+        Some(ModuleSpecifier::from_file_path(path).unwrap())
+      }
+    }
   } else if specifier.starts_with('#') {
-    package_imports_resolve_new(specifier, referrer, conditions, npm_resolver)?
+    Some(package_imports_resolve_new(
+      specifier,
+      referrer,
+      conditions,
+      npm_resolver,
+    )?)
   } else if let Ok(resolved) = Url::parse(specifier) {
-    resolved
+    Some(resolved)
   } else {
-    package_resolve_new(specifier, referrer, conditions, npm_resolver)?
+    match mode {
+      ResolutionMode::Execution => Some(package_resolve_new(
+        specifier,
+        referrer,
+        conditions,
+        npm_resolver,
+      )?),
+      ResolutionMode::Types => {
+        // todo(dsherret): handle path here
+        let package_dir_path = npm_resolver
+          .resolve_package_from_package(&specifier, &referrer)?
+          .folder_path;
+        package_config_types_resolve(&package_dir_path, None, npm_resolver)?
+      }
+    }
   };
-  finalize_resolution(resolved, referrer)
+  Ok(match url {
+    Some(url) => Some(finalize_resolution(url, referrer)?),
+    None => None,
+  })
 }
 
 fn finalize_resolution(

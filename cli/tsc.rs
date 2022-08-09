@@ -2,7 +2,6 @@
 
 use crate::args::TsConfig;
 use crate::compat;
-use crate::compat::node_resolve_new;
 use crate::diagnostics::Diagnostics;
 use crate::emit;
 use crate::graph_util::GraphData;
@@ -13,7 +12,6 @@ use crate::npm::NpmPackageResolver;
 
 use deno_ast::MediaType;
 use deno_core::anyhow::anyhow;
-use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 use deno_core::located_script_name;
@@ -524,7 +522,7 @@ fn op_resolve(
         }
         _ => None,
       };
-      let mut maybe_result = match resolved_dep {
+      let maybe_result = match resolved_dep {
         Some(Resolved::Ok { specifier, .. }) => {
           let specifier = graph_data.follow_redirect(specifier);
           match graph_data.get(&specifier) {
@@ -546,51 +544,43 @@ fn op_resolve(
             },
             _ => {
               // handle npm:<package> urls
-              if let Ok(npm_ref) =
-                NpmPackageReference::from_specifier(&specifier)
-              {
-                let (specifier, media_type) =
-                  resolve_npm_package_reference_types(
-                    &npm_ref,
-                    &state.npm_resolver,
-                  )?;
-                Some((specifier, media_type))
-              } else {
-                None
-              }
+              // todo(dsherret): re-enable
+              // if let Ok(npm_ref) =
+              //   NpmPackageReference::from_specifier(&specifier)
+              // {
+              //   let (specifier, media_type) =
+              //     resolve_npm_package_reference_types(
+              //       &npm_ref,
+              //       &state.npm_resolver,
+              //     )?;
+              //   Some((specifier, media_type))
+              // } else {
+              //   None
+              // }
+              None
             }
           }
         }
         _ => None,
       };
-      if maybe_result.is_none() {
-        // handle an npm package
-        if state.npm_resolver.in_npm_package(&referrer) {
-          let pkg = match state
-            .npm_resolver
-            .resolve_package_from_package(specifier, &referrer)
-          {
-            Ok(pkg) => pkg,
-            Err(err) => {
-              bail!(
-                "Could not resolve '{}' from '{}'.\n\n{:#}",
-                specifier,
-                referrer,
-                err
-              )
-            }
-          };
-          let maybe_response = compat::resolve_typescript_types(
-            &pkg.folder_path,
-            None,
-            &state.npm_resolver,
-          )
-          .with_context(|| format!("Error resolving '{}' types.", pkg.id))?;
-          maybe_result = Some(maybe_node_response_to_media_type_and_specifier(
-            maybe_response,
-          )?);
-        }
-      }
+
+      // todo(dsherret): re-enable type checking for within npm packages
+      // if maybe_result.is_none() && state.npm_resolver.in_npm_package(&referrer) {
+      //   // handle an npm package
+      //   let maybe_response = compat::node_resolve_new(
+      //     specifier,
+      //     &referrer,
+      //     &state.npm_resolver,
+      //     compat::ResolutionMode::Types,
+      //   )
+      //   .with_context(|| {
+      //     format!("Error resolving '{}' from '{}'.", specifier, referrer)
+      //   })?;
+      //   maybe_result = Some(maybe_node_response_to_media_type_and_specifier(
+      //     maybe_response,
+      //   )?);
+      // }
+
       let result = match maybe_result {
         Some((specifier, media_type)) => {
           let specifier_str = match specifier.scheme() {
@@ -632,13 +622,10 @@ pub fn resolve_npm_package_reference_types(
   npm_ref: &NpmPackageReference,
   npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<(ModuleSpecifier, MediaType), AnyError> {
-  let package_folder = npm_resolver
-    .resolve_package_from_deno_module(&npm_ref.req)?
-    .folder_path;
-  let maybe_response = compat::resolve_typescript_types(
-    &package_folder,
-    npm_ref.sub_path.as_ref().map(|s| s.as_str()),
+  let maybe_response = compat::node_resolve_npm_reference_new(
+    &npm_ref,
     npm_resolver,
+    compat::ResolutionMode::Types,
   )?;
   maybe_node_response_to_media_type_and_specifier(maybe_response)
 }

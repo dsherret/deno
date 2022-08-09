@@ -20,7 +20,6 @@ use super::urls::INVALID_SPECIFIER;
 
 use crate::args::TsConfig;
 use crate::compat;
-use crate::compat::node_resolve_new;
 use crate::fs_util::specifier_to_file_path;
 use crate::npm::NpmPackageResolver;
 use crate::tsc;
@@ -2666,26 +2665,20 @@ fn op_resolve_inner(
 ) -> Result<Vec<Option<(String, String)>>, AnyError> {
   let referrer = state.normalize_specifier(&args.base)?;
 
-  // handle resolution coming from an npm package
   let results = if state.state_snapshot.npm_resolver.in_npm_package(&referrer) {
+    // handle resolution inside an npm package
     args
       .specifiers
       .iter()
       .map(|specifier| {
-        let maybe_response = state
-          .state_snapshot
-          .npm_resolver
-          .resolve_package_from_package(specifier, &referrer)
-          .ok()
-          .and_then(|pkg| {
-            compat::resolve_typescript_types(
-              &pkg.folder_path,
-              None,
-              &state.state_snapshot.npm_resolver,
-            )
-            .ok()
-            .flatten()
-          });
+        let maybe_response = compat::node_resolve_new(
+          specifier,
+          &referrer,
+          &state.state_snapshot.npm_resolver,
+          compat::ResolutionMode::Types,
+        )
+        .ok()
+        .flatten();
         maybe_node_response_to_media_type_and_specifier(maybe_response).ok()
       })
       .collect::<Vec<_>>()

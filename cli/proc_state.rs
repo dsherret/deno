@@ -30,6 +30,7 @@ use crate::resolver::ImportMapResolver;
 use crate::resolver::JsxResolver;
 
 use deno_core::anyhow::anyhow;
+use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::custom_error;
 use deno_core::error::AnyError;
@@ -504,10 +505,14 @@ impl ProcState {
     Ok(())
   }
 
-  fn handle_node_resolve_response(
+  fn handle_node_resolve_result(
     &self,
-    response: ResolveResponse,
+    result: Result<Option<ResolveResponse>, AnyError>,
   ) -> Result<ModuleSpecifier, AnyError> {
+    let response = match result? {
+      Some(response) => response,
+      None => bail!("Not found."),
+    };
     if let ResolveResponse::CommonJs(specifier) = &response {
       // remember that this was a common js resolution
       self.cjs_resolutions.lock().insert(specifier.clone());
@@ -522,19 +527,36 @@ impl ProcState {
   ) -> Result<ModuleSpecifier, AnyError> {
     // handle npm:<package-name>@<version> specifiers
     if let Ok(reference) = NpmPackageReference::from_str(&specifier) {
-      return self.handle_node_resolve_response(
-        compat::node_resolve_npm_reference_new(&reference, &self.npm_resolver)?,
-      );
+      return self
+        .handle_node_resolve_result(compat::node_resolve_npm_reference_new(
+          &reference,
+          &self.npm_resolver,
+          compat::ResolutionMode::Execution,
+        ))
+        .with_context(|| format!("Could not resolve '{}'.", reference));
     }
 
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
       if self.npm_resolver.in_npm_package(&referrer) {
         // we're in an npm package, so use node resolution
-        return self.handle_node_resolve_response(node_resolve_new(
-          specifier,
-          &referrer,
-          &self.npm_resolver,
-        )?);
+        return self
+          .handle_node_resolve_result(node_resolve_new(
+            specifier,
+            &referrer,
+            &self.npm_resolver,
+            compat::ResolutionMode::Execution,
+          ))
+          .with_context(|| {
+            format!(
+              "Could not resolve '{}' from '{}'.",
+              specifier,
+              self
+                .npm_resolver
+                .resolve_package_from_specifier(&referrer)
+                .unwrap()
+                .id
+            )
+          });
       }
 
       let graph_data = self.graph_data.read();
