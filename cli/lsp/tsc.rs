@@ -19,6 +19,7 @@ use super::urls::LspUrlMap;
 use super::urls::INVALID_SPECIFIER;
 
 use crate::args::TsConfig;
+use crate::compat;
 use crate::compat::node_resolve_new;
 use crate::fs_util::specifier_to_file_path;
 use crate::npm::NpmPackageResolver;
@@ -2671,12 +2672,20 @@ fn op_resolve_inner(
       .specifiers
       .iter()
       .map(|specifier| {
-        let maybe_response = node_resolve_new(
-          specifier,
-          &referrer,
-          &state.state_snapshot.npm_resolver,
-        )
-        .ok();
+        let maybe_response = state
+          .state_snapshot
+          .npm_resolver
+          .resolve_package_from_package(specifier, &referrer)
+          .ok()
+          .and_then(|pkg| {
+            compat::resolve_typescript_types(
+              &pkg.folder_path,
+              None,
+              &state.state_snapshot.npm_resolver,
+            )
+            .ok()
+            .flatten()
+          });
         maybe_node_response_to_media_type_and_specifier(maybe_response).ok()
       })
       .collect::<Vec<_>>()
