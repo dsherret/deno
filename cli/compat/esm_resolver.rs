@@ -273,7 +273,6 @@ pub fn node_resolve_binary_export(
 fn package_config_types_resolve(
   package_folder: &Path,
   path: Option<&str>,
-  npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<Option<ModuleSpecifier>, AnyError> {
   if path.is_some() {
     todo!("npm paths are not currently implemented for type checking");
@@ -312,7 +311,6 @@ pub fn node_resolve_npm_reference_new(
     ResolutionMode::Types => package_config_types_resolve(
       &package_folder,
       reference.sub_path.as_deref(),
-      npm_resolver,
     )?,
   };
   let url = match maybe_url {
@@ -503,7 +501,7 @@ fn module_resolve_new(
         let package_dir_path = npm_resolver
           .resolve_package_from_package(&specifier, &referrer)?
           .folder_path;
-        package_config_types_resolve(&package_dir_path, None, npm_resolver)?
+        package_config_types_resolve(&package_dir_path, None)?
       }
     }
   };

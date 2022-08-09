@@ -1137,7 +1137,7 @@ async fn run_command(
       if use_esm_loader {
         worker.execute_main_module(&main_module).await?;
       } else {
-        compat::load_cjs_module(
+        compat::load_cjs_module_from_ext_node(
           &mut worker.js_runtime,
           &main_module.to_file_path().unwrap().display().to_string(),
           true,

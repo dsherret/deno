@@ -155,7 +155,6 @@ pub async fn load_builtin_node_modules(
   Ok(())
 }
 
-#[allow(unused)]
 pub fn load_cjs_module_from_ext_node(
   js_runtime: &mut JsRuntime,
   module: &str,

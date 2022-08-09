@@ -296,6 +296,14 @@
       const curPath = paths[i];
       if (curPath && stat(curPath) < 1) continue;
 
+      const isDenoDirPackage = Deno.core.opSync(
+        "op_require_is_deno_dir_package",
+        curPath,
+      );
+      if (isDenoDirPackage) {
+        return curPath;
+      }
+
       if (!absoluteRequest) {
         const exportsResolved = false;
         // TODO:
@@ -350,12 +358,24 @@
   };
 
   Module._resolveLookupPaths = function (request, parent) {
-    return core.opSync(
+    const paths = [];
+    if (parent?.filename && parent.filename.length > 0) {
+      const denoDirPath = core.opSync(
+        "op_require_resolve_deno_dir",
+        request,
+        parent,
+      );
+      if (denoDirPath) {
+        paths.push(denoDirPath);
+      }
+    }
+    paths.push(...core.opSync(
       "op_require_resolve_lookup_paths",
       request,
       parent?.paths,
       parent?.filename ?? "",
-    );
+    ));
+    return paths;
   };
 
   Module._load = function (request, parent, isMain) {

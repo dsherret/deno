@@ -17,6 +17,8 @@ pub fn init() -> Extension {
       op_require_init_paths::decl(),
       op_require_node_module_paths::decl(),
       op_require_proxy_path::decl(),
+      op_require_is_deno_dir_package::decl(),
+      op_require_resolve_deno_dir::decl(),
       op_require_is_request_relative::decl(),
       op_require_resolve_lookup_paths::decl(),
       op_require_try_self_parent_path::decl(),
@@ -166,6 +168,19 @@ fn op_require_is_request_relative(request: String) -> bool {
 }
 
 #[op]
+fn op_require_resolve_deno_dir(
+  _request: String,
+  _parent_filename: String,
+) -> Option<String> {
+  None
+}
+
+#[op]
+fn op_require_is_deno_dir_package(_path: String) -> bool {
+  false
+}
+
+#[op]
 fn op_require_resolve_lookup_paths(
   request: String,
   maybe_parent_paths: Option<Vec<String>>,
@@ -311,7 +326,6 @@ fn op_require_try_self(
 }
 
 #[op]
-fn op_require_read_file(filename: String) -> Result<String, AnyError> {
-  let contents = std::fs::read_to_string(filename)?;
-  Ok(contents)
+fn op_require_read_file(_filename: String) -> Result<String, AnyError> {
+  panic!("An op_require_read_file must be defined in middleware.");
 }
