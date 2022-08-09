@@ -2666,12 +2666,7 @@ fn op_resolve_inner(
   let referrer = state.normalize_specifier(&args.base)?;
 
   // handle resolution coming from an npm package
-  let results = if state
-    .state_snapshot
-    .npm_resolver
-    .resolve_package_from_specifier(&referrer)
-    .is_ok()
-  {
+  let results = if state.state_snapshot.npm_resolver.in_npm_package(&referrer) {
     args
       .specifiers
       .iter()

@@ -18,6 +18,7 @@ use deno_core::ModuleSpecifier;
 use deno_graph::source::ResolveResponse;
 use deno_graph::source::Resolver;
 use regex::Regex;
+use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Debug, Default)]
@@ -257,7 +258,7 @@ pub fn node_resolve_binary_export(
 }
 
 pub fn resolve_typescript_types(
-  pkg_req: &NpmPackageReq,
+  package_folder: &Path,
   path: Option<&str>,
   npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<Option<ResolveResponse>, AnyError> {
@@ -265,9 +266,6 @@ pub fn resolve_typescript_types(
     todo!("npm paths are not currently implemented for type checking");
   }
 
-  let package_folder = npm_resolver
-    .resolve_package_from_deno_module(&pkg_req)?
-    .folder_path;
   let package_json_path = package_folder.join("package.json");
   let package_json = PackageJson::load(package_json_path.clone())?;
   let types_entry = match package_json.types {

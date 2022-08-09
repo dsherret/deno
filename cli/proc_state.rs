@@ -443,6 +443,7 @@ impl ProcState {
         .npm_resolver
         .add_package_reqs(npm_package_references)
         .await?;
+      self.npm_resolver.cache_packages().await?;
 
       // add the builtin node modules to the graph data
       let node_std_graph = self
@@ -527,11 +528,7 @@ impl ProcState {
     }
 
     if let Ok(referrer) = deno_core::resolve_url_or_path(referrer) {
-      if self
-        .npm_resolver
-        .resolve_package_from_specifier(&referrer)
-        .is_ok()
-      {
+      if self.npm_resolver.in_npm_package(&referrer) {
         // we're in an npm package, so use node resolution
         return self.handle_node_resolve_response(node_resolve_new(
           specifier,
@@ -653,6 +650,7 @@ impl ProcState {
     }
     if !package_reqs.is_empty() {
       self.npm_resolver.add_package_reqs(package_reqs).await?;
+      self.npm_resolver.cache_packages().await?;
     }
 
     Ok(graph)

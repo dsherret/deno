@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use deno_ast::ModuleSpecifier;
+use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 
 pub use resolution::NpmPackageId;
@@ -50,6 +51,11 @@ pub trait NpmPackageResolver {
     &self,
     specifier: &ModuleSpecifier,
   ) -> Result<LocalNpmPackageInfo, AnyError>;
+
+  /// Gets if the provided specifier is in an npm package.
+  fn in_npm_package(&self, specifier: &ModuleSpecifier) -> bool {
+    self.resolve_package_from_specifier(&specifier).is_ok()
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -99,7 +105,10 @@ impl GlobalNpmPackageResolver {
       self
         .cache
         .ensure_package(&package.id, &package.dist)
-        .await?;
+        .await
+        .with_context(|| {
+          format!("Failed caching npm package '{}'.", package.id)
+        })?;
     }
     Ok(())
   }
@@ -112,7 +121,7 @@ impl GlobalNpmPackageResolver {
   }
 
   fn package_folder(&self, package: &NpmPackageId) -> PathBuf {
-    self.cache.package_folder(package).join("package")
+    self.cache.package_folder(package)
   }
 
   /// Creates an inner clone.
@@ -179,7 +188,7 @@ impl NpmPackageResolverSnapshot {
   }
 
   fn package_folder(&self, package: &NpmPackageId) -> PathBuf {
-    self.cache.package_folder(package).join("package")
+    self.cache.package_folder(package)
   }
 }
 

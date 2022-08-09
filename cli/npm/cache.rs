@@ -90,10 +90,11 @@ impl ReadonlyNpmCache {
     // examples:
     // * chalk/5.0.1/package
     // * @types/chalk/5.0.1/package
+    let is_scoped_package = relative_url.starts_with("@");
     let mut parts = relative_url
       .split('/')
       .enumerate()
-      .take_while(|(i, part)| *i < 2 || *part != "package")
+      .take(if is_scoped_package { 3 } else { 2 })
       .map(|(_, part)| part)
       .collect::<Vec<_>>();
     let version = parts.pop().unwrap();

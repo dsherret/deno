@@ -1,13 +1,16 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 
 use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 use flate2::read::GzDecoder;
 use tar::Archive;
+use tar::EntryType;
 
 use super::cache::NPM_PACKAGE_SYNC_LOCK_FILENAME;
 use super::registry::NpmPackageVersionDistInfo;
@@ -107,9 +110,40 @@ fn verify_tarball_integrity(
 }
 
 fn extract_tarball(data: &[u8], output_folder: &Path) -> Result<(), AnyError> {
+  fs::create_dir_all(output_folder)?;
+  let output_folder = fs::canonicalize(output_folder)?;
   let tar = GzDecoder::new(data);
   let mut archive = Archive::new(tar);
-  archive.unpack(output_folder)?;
+  archive.set_overwrite(true);
+  archive.set_preserve_permissions(true);
+  let mut created_dirs = HashSet::new();
+
+  for entry in archive.entries()? {
+    let mut entry = entry?;
+    let path = entry.path()?;
+    let entry_type = entry.header().entry_type();
+    // skip the first component which will be either "package" or the name of the package
+    let relative_path = path.components().skip(1).collect::<PathBuf>();
+    let absolute_path = output_folder.join(relative_path);
+    let dir_path = if entry_type == EntryType::Directory {
+      absolute_path.as_path()
+    } else {
+      absolute_path.parent().unwrap()
+    };
+    if created_dirs.insert(dir_path.to_path_buf()) {
+      fs::create_dir_all(&dir_path)?;
+      let canonicalized_dir = fs::canonicalize(&dir_path)?;
+      if !canonicalized_dir.starts_with(&output_folder) {
+        bail!(
+          "Extracted directory '{}' of npm tarball was not in output directory.",
+          canonicalized_dir.display()
+        )
+      }
+    }
+    if entry.header().entry_type() == EntryType::Regular {
+      entry.unpack(&absolute_path)?;
+    }
+  }
   Ok(())
 }
 

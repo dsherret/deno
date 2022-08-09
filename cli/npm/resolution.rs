@@ -110,6 +110,16 @@ pub struct NpmPackageId {
   pub version: semver::Version,
 }
 
+impl NpmPackageId {
+  pub fn scope(&self) -> Option<&str> {
+    if self.name.starts_with('@') && self.name.contains('/') {
+      self.name.split('/').next()
+    } else {
+      None
+    }
+  }
+}
+
 impl std::fmt::Display for NpmPackageId {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     write!(f, "{}@{}", self.name, self.version)
@@ -161,6 +171,16 @@ impl NpmResolutionSnapshot {
       Some(referrer_package) => match referrer_package.dependencies.get(name) {
         Some(id) => Ok(self.packages.get(id).unwrap()),
         None => {
+          // todo(dsherret): this might not be exactly correct... done to make @types packages work
+          if let Some(scope) = referrer.scope() {
+            if let Some(id) = referrer_package
+              .dependencies
+              .get(&format!("{}/{}", scope, name))
+            {
+              return Ok(self.packages.get(id).unwrap());
+            }
+          }
+
           bail!(
             "could not find package '{}' referenced by '{}'",
             name,

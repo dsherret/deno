@@ -13,6 +13,7 @@ use crate::npm::NpmPackageResolver;
 
 use deno_ast::MediaType;
 use deno_core::anyhow::anyhow;
+use deno_core::anyhow::bail;
 use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 use deno_core::located_script_name;
@@ -452,11 +453,7 @@ fn op_load(state: &mut OpState, args: Value) -> Result<Value, AnyError> {
     {
       media_type = *mt;
       Some(Cow::Borrowed(code as &str))
-    } else if state
-      .npm_resolver
-      .resolve_package_from_specifier(&specifier)
-      .is_ok()
-    {
+    } else if state.npm_resolver.in_npm_package(&specifier) {
       let file_path = specifier.to_file_path().unwrap();
       Some(Cow::Owned(std::fs::read_to_string(file_path)?))
     } else {
@@ -504,15 +501,7 @@ fn op_resolve(
     )?
   };
   for specifier in &args.specifiers {
-    // handle npm:<package> urls
-    if let Ok(npm_ref) = NpmPackageReference::from_str(specifier) {
-      let (specifier, media_type) =
-        resolve_npm_package_reference_types(&npm_ref, &state.npm_resolver)?;
-      resolved.push((
-        specifier.to_string(),
-        media_type.as_ts_extension().to_string(),
-      ));
-    } else if specifier.starts_with("asset:///") {
+    if specifier.starts_with("asset:///") {
       resolved.push((
         specifier.clone(),
         MediaType::from(specifier).as_ts_extension().to_string(),
@@ -555,22 +544,50 @@ fn op_resolve(
               }
               _ => Some((specifier, *media_type)),
             },
-            _ => None,
+            _ => {
+              // handle npm:<package> urls
+              if let Ok(npm_ref) =
+                NpmPackageReference::from_specifier(&specifier)
+              {
+                let (specifier, media_type) =
+                  resolve_npm_package_reference_types(
+                    &npm_ref,
+                    &state.npm_resolver,
+                  )?;
+                Some((specifier, media_type))
+              } else {
+                None
+              }
+            }
           }
         }
         _ => None,
       };
       if maybe_result.is_none() {
         // handle an npm package
-        if state
-          .npm_resolver
-          .resolve_package_from_specifier(&referrer)
-          .is_ok()
-        {
-          let response =
-            node_resolve_new(specifier, &referrer, &state.npm_resolver)?;
+        if state.npm_resolver.in_npm_package(&referrer) {
+          let pkg = match state
+            .npm_resolver
+            .resolve_package_from_package(specifier, &referrer)
+          {
+            Ok(pkg) => pkg,
+            Err(err) => {
+              bail!(
+                "Could not resolve '{}' from '{}'.\n\n{:#}",
+                specifier,
+                referrer,
+                err
+              )
+            }
+          };
+          let maybe_response = compat::resolve_typescript_types(
+            &pkg.folder_path,
+            None,
+            &state.npm_resolver,
+          )
+          .with_context(|| format!("Error resolving '{}' types.", pkg.id))?;
           maybe_result = Some(maybe_node_response_to_media_type_and_specifier(
-            Some(response),
+            maybe_response,
           )?);
         }
       }
@@ -615,8 +632,11 @@ pub fn resolve_npm_package_reference_types(
   npm_ref: &NpmPackageReference,
   npm_resolver: &dyn NpmPackageResolver,
 ) -> Result<(ModuleSpecifier, MediaType), AnyError> {
+  let package_folder = npm_resolver
+    .resolve_package_from_deno_module(&npm_ref.req)?
+    .folder_path;
   let maybe_response = compat::resolve_typescript_types(
-    &npm_ref.req,
+    &package_folder,
     npm_ref.sub_path.as_ref().map(|s| s.as_str()),
     npm_resolver,
   )?;
