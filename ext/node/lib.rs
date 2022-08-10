@@ -379,7 +379,10 @@ fn op_require_read_file(
 }
 
 #[op]
-pub fn op_require_as_file_path(file_or_url: String) -> String {
+pub fn op_require_as_file_path(
+  state: &mut OpState,
+  file_or_url: String,
+) -> String {
   check_unstable(state);
   match Url::parse(&file_or_url) {
     Ok(url) => url.to_file_path().unwrap().to_string_lossy().to_string(),
