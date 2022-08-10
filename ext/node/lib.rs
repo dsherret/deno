@@ -6,9 +6,12 @@ use deno_core::normalize_path;
 use deno_core::op;
 use deno_core::url::Url;
 use deno_core::Extension;
+use deno_core::OpState;
 use std::path::PathBuf;
 
-pub fn init() -> Extension {
+pub struct Unstable(pub bool);
+
+pub fn init(unstable: bool) -> Extension {
   Extension::builder()
     .js(include_js_files!(
       prefix "deno:ext/node",
@@ -33,11 +36,26 @@ pub fn init() -> Extension {
       op_require_read_file::decl(),
       op_require_as_file_path::decl(),
     ])
+    .state(move |state| {
+      state.put(Unstable(unstable));
+      Ok(())
+    })
     .build()
 }
 
+fn check_unstable(state: &OpState) {
+  let unstable = state.borrow::<Unstable>();
+
+  if !unstable.0 {
+    eprintln!("Unstable API 'require'. The --unstable flag must be provided.",);
+    std::process::exit(70);
+  }
+}
+
 #[op]
-pub fn op_require_init_paths() -> Vec<String> {
+pub fn op_require_init_paths(state: &mut OpState) -> Vec<String> {
+  check_unstable(state);
+
   let (home_dir, node_path) = if cfg!(windows) {
     (
       std::env::var("USERPROFILE").unwrap_or_else(|_| "".into()),
@@ -84,7 +102,11 @@ pub fn op_require_init_paths() -> Vec<String> {
 }
 
 #[op]
-pub fn op_require_node_module_paths(from: String) -> Vec<String> {
+pub fn op_require_node_module_paths(
+  state: &mut OpState,
+  from: String,
+) -> Vec<String> {
+  check_unstable(state);
   // Guarantee that "from" is absolute.
   let from = deno_core::resolve_path(&from)
     .unwrap()
@@ -130,7 +152,8 @@ pub fn op_require_node_module_paths(from: String) -> Vec<String> {
 }
 
 #[op]
-fn op_require_proxy_path(filename: String) -> String {
+fn op_require_proxy_path(state: &mut OpState, filename: String) -> String {
+  check_unstable(state);
   // Allow a directory to be passed as the filename
   let trailing_slash = if cfg!(windows) {
     filename.ends_with('\\')
@@ -147,7 +170,11 @@ fn op_require_proxy_path(filename: String) -> String {
 }
 
 #[op]
-fn op_require_is_request_relative(request: String) -> bool {
+fn op_require_is_request_relative(
+  state: &mut OpState,
+  request: String,
+) -> bool {
+  check_unstable(state);
   if request.starts_with("./") {
     return true;
   }
@@ -184,10 +211,12 @@ fn op_require_is_deno_dir_package(_path: String) -> bool {
 
 #[op]
 fn op_require_resolve_lookup_paths(
+  state: &mut OpState,
   request: String,
   maybe_parent_paths: Option<Vec<String>>,
   parent_filename: String,
 ) -> Option<Vec<String>> {
+  check_unstable(state);
   if !request.starts_with('.')
     || (request.len() > 1
       && !request.starts_with("..")
@@ -224,12 +253,14 @@ fn op_require_resolve_lookup_paths(
 }
 
 #[op]
-fn op_require_path_is_absolute(p: String) -> bool {
+fn op_require_path_is_absolute(state: &mut OpState, p: String) -> bool {
+  check_unstable(state);
   PathBuf::from(p).is_absolute()
 }
 
 #[op]
-fn op_require_stat(filename: String) -> i32 {
+fn op_require_stat(state: &mut OpState, filename: String) -> i32 {
+  check_unstable(state);
   if let Ok(metadata) = std::fs::metadata(&filename) {
     if metadata.is_file() {
       return 0;
@@ -242,7 +273,11 @@ fn op_require_stat(filename: String) -> i32 {
 }
 
 #[op]
-fn op_require_real_path(request: String) -> Result<String, AnyError> {
+fn op_require_real_path(
+  state: &mut OpState,
+  request: String,
+) -> Result<String, AnyError> {
+  check_unstable(state);
   let mut canonicalized_path = PathBuf::from(request).canonicalize()?;
   if cfg!(windows) {
     canonicalized_path = PathBuf::from(
@@ -256,7 +291,8 @@ fn op_require_real_path(request: String) -> Result<String, AnyError> {
 }
 
 #[op]
-fn op_require_path_resolve(parts: Vec<String>) -> String {
+fn op_require_path_resolve(state: &mut OpState, parts: Vec<String>) -> String {
+  check_unstable(state);
   assert!(!parts.is_empty());
   let mut p = PathBuf::from(&parts[0]);
   if parts.len() > 1 {
@@ -268,23 +304,27 @@ fn op_require_path_resolve(parts: Vec<String>) -> String {
 }
 
 #[op]
-fn op_require_path_dirname(request: String) -> String {
+fn op_require_path_dirname(state: &mut OpState, request: String) -> String {
+  check_unstable(state);
   let p = PathBuf::from(request);
   p.parent().unwrap().to_string_lossy().to_string()
 }
 
 #[op]
-fn op_require_path_basename(request: String) -> String {
+fn op_require_path_basename(state: &mut OpState, request: String) -> String {
+  check_unstable(state);
   let p = PathBuf::from(request);
   p.file_name().unwrap().to_string_lossy().to_string()
 }
 
 #[op]
 fn op_require_try_self_parent_path(
+  state: &mut OpState,
   has_parent: bool,
   maybe_parent_filename: Option<String>,
   maybe_parent_id: Option<String>,
 ) -> Option<String> {
+  check_unstable(state);
   if !has_parent {
     return None;
   }
@@ -305,10 +345,12 @@ fn op_require_try_self_parent_path(
 
 #[op]
 fn op_require_try_self(
+  state: &mut OpState,
   has_parent: bool,
   maybe_parent_filename: Option<String>,
   maybe_parent_id: Option<String>,
 ) -> Option<String> {
+  check_unstable(state);
   if !has_parent {
     return None;
   }
@@ -328,13 +370,17 @@ fn op_require_try_self(
 }
 
 #[op]
-fn op_require_read_file(_filename: String) -> Result<String, AnyError> {
-  panic!("An op_require_read_file must be defined in middleware.");
+fn op_require_read_file(
+  state: &mut OpState,
+  _filename: String,
+) -> Result<String, AnyError> {
+  check_unstable(state);
+  todo!("not implemented");
 }
 
 #[op]
 pub fn op_require_as_file_path(file_or_url: String) -> String {
-  // todo: unstable checks
+  check_unstable(state);
   match Url::parse(&file_or_url) {
     Ok(url) => url.to_file_path().unwrap().to_string_lossy().to_string(),
     Err(_) => file_or_url,

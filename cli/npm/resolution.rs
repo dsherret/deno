@@ -1,5 +1,6 @@
 // Copyright 2018-2022 the Deno authors. All rights reserved. MIT license.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
@@ -70,7 +71,7 @@ impl NpmPackageReference {
     let specifier = match specifier.strip_prefix("npm:") {
       Some(s) => s,
       None => {
-        bail!("not an npm specifier for '{}'", specifier);
+        bail!("Not an npm specifier: '{}'", specifier);
       }
     };
     let (name, version_req) = match specifier.rsplit_once('@') {
@@ -247,7 +248,7 @@ impl NpmResolution {
     &self,
     mut packages: Vec<NpmPackageReq>,
   ) -> Result<(), AnyError> {
-    // multiple packages are resolved on alphabetical order
+    // multiple packages are resolved in alphabetical order
     packages.sort_by(|a, b| a.name.cmp(&b.name));
 
     // only allow one thread in here at a time
@@ -255,7 +256,8 @@ impl NpmResolution {
     let mut snapshot = self.snapshot.read().clone();
     let mut pending_dependencies = VecDeque::new();
 
-    // go over the top level packages first
+    // go over the top level packages first, then down the
+    // tree one level at a time through all the branches
     for package_ref in packages {
       if snapshot.package_reqs.contains_key(&package_ref) {
         // skip analyzing this package, as there's already a matching top level package
@@ -309,9 +311,15 @@ impl NpmResolution {
     while let Some((parent_package_id, mut deps)) =
       pending_dependencies.pop_front()
     {
-      // sort the dependencies alphabetically
-      // todo(dsherret): should this be sorted by package name & descending (ascending?) version or bare specifier?
-      deps.sort_by(|a, b| a.bare_specifier.cmp(&b.bare_specifier));
+      // sort the dependencies alphabetically by name then by version descending
+      deps.sort_by(|a, b| match a.name.cmp(&b.name) {
+        // sort by newest to oldest
+        Ordering::Equal => b
+          .version_req
+          .version_text()
+          .cmp(&a.version_req.version_text()),
+        ordering => ordering,
+      });
 
       // now resolve them
       for dep in deps {

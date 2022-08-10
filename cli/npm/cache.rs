@@ -11,6 +11,7 @@ use deno_runtime::colors;
 use deno_runtime::deno_fetch::reqwest;
 
 use crate::deno_dir::DenoDir;
+use crate::fs_util;
 
 use super::tarball::verify_and_extract_tarball;
 use super::NpmPackageId;
@@ -52,17 +53,22 @@ impl ReadonlyNpmCache {
     Self::new(dir.root.join("npm"))
   }
 
-  pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
+  pub fn package_folder(
+    &self,
+    id: &NpmPackageId,
+    registry_url: &Url,
+  ) -> PathBuf {
     self
-      .package_name_folder(&id.name)
+      .package_name_folder(&id.name, registry_url)
       .join(id.version.to_string())
   }
 
-  pub fn package_name_folder(&self, name: &str) -> PathBuf {
-    let name_parts = name.split('/');
-    let mut dir = self.root_dir.clone();
+  pub fn package_name_folder(&self, name: &str, registry_url: &Url) -> PathBuf {
+    let mut dir = self
+      .root_dir
+      .join(fs_util::root_url_to_safe_local_dirname(registry_url));
     // ensure backslashes are used on windows
-    for part in name_parts {
+    for part in name.split('/') {
       dir = dir.join(part);
     }
     dir
@@ -88,9 +94,9 @@ impl ReadonlyNpmCache {
     }
 
     // examples:
-    // * chalk/5.0.1/package
-    // * @types/chalk/5.0.1/package
-    let is_scoped_package = relative_url.starts_with("@");
+    // * chalk/5.0.1/
+    // * @types/chalk/5.0.1/
+    let is_scoped_package = relative_url.starts_with('@');
     let mut parts = relative_url
       .split('/')
       .enumerate()
@@ -128,8 +134,9 @@ impl NpmCache {
     &self,
     id: &NpmPackageId,
     dist: &NpmPackageVersionDistInfo,
+    registry_url: &Url,
   ) -> Result<(), AnyError> {
-    let package_folder = self.0.package_folder(id);
+    let package_folder = self.0.package_folder(id, registry_url);
     if package_folder.exists()
       // if this file exists, then the package didn't successfully extract
       // the first time, or another process is currently extracting the zip file
@@ -154,7 +161,7 @@ impl NpmCache {
     } else {
       let bytes = response.bytes().await?;
 
-      match verify_and_extract_tarball(id, &bytes, &dist, &package_folder) {
+      match verify_and_extract_tarball(id, &bytes, dist, &package_folder) {
         Ok(()) => Ok(()),
         Err(err) => {
           if let Err(remove_err) = fs::remove_dir_all(&package_folder) {
@@ -180,12 +187,16 @@ impl NpmCache {
     }
   }
 
-  pub fn package_folder(&self, id: &NpmPackageId) -> PathBuf {
-    self.0.package_folder(id)
+  pub fn package_folder(
+    &self,
+    id: &NpmPackageId,
+    registry_url: &Url,
+  ) -> PathBuf {
+    self.0.package_folder(id, registry_url)
   }
 
-  pub fn package_name_folder(&self, name: &str) -> PathBuf {
-    self.0.package_name_folder(name)
+  pub fn package_name_folder(&self, name: &str, registry_url: &Url) -> PathBuf {
+    self.0.package_name_folder(name, registry_url)
   }
 
   pub fn resolve_package_id_from_specifier(
