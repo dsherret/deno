@@ -654,6 +654,7 @@ async fn eval_command(
   // to allow module access by TS compiler.
   ps.file_fetcher.insert_cached(file);
   debug!("main_module {}", &main_module);
+  // todo(dsherret): wrong! We won't know if it has any npm packages at this point
   if ps.options.compat() || ps.npm_resolver.has_packages() {
     worker.execute_side_module(&compat::GLOBAL_URL).await?;
   }
@@ -1202,14 +1203,15 @@ async fn run_command(
           )?;
         }
       } else {
+        // Regular ES module execution
+        let id = worker.preload_module(&main_module, true).await?;
         // todo(dsherret): ideally we shouldn't create globals here
         if ps.npm_resolver.has_packages() {
           worker.execute_side_module(&compat::GLOBAL_URL).await?;
           worker.execute_side_module(&compat::MODULE_URL).await?;
           compat::load_builtin_node_modules(&mut worker.js_runtime).await?;
         }
-        // Regular ES module execution
-        worker.execute_main_module(&main_module).await?;
+        worker.execute_preloaded_module(id).await?;
       }
 
       (worker, main_module, maybe_coverage_collector)

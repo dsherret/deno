@@ -4,6 +4,7 @@ use deno_core::error::AnyError;
 use deno_core::include_js_files;
 use deno_core::normalize_path;
 use deno_core::op;
+use deno_core::url::Url;
 use deno_core::Extension;
 use std::path::PathBuf;
 
@@ -30,6 +31,7 @@ pub fn init() -> Extension {
       op_require_path_resolve::decl(),
       op_require_path_basename::decl(),
       op_require_read_file::decl(),
+      op_require_as_file_path::decl(),
     ])
     .build()
 }
@@ -328,4 +330,13 @@ fn op_require_try_self(
 #[op]
 fn op_require_read_file(_filename: String) -> Result<String, AnyError> {
   panic!("An op_require_read_file must be defined in middleware.");
+}
+
+#[op]
+pub fn op_require_as_file_path(file_or_url: String) -> String {
+  // todo: unstable checks
+  match Url::parse(&file_or_url) {
+    Ok(url) => url.to_file_path().unwrap().to_string_lossy().to_string(),
+    Err(_) => file_or_url,
+  }
 }

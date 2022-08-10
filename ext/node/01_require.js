@@ -16,6 +16,7 @@
     ObjectGetOwnPropertyDescriptor,
     ObjectGetPrototypeOf,
     ObjectEntries,
+    ObjectPrototype,
     ObjectPrototypeHasOwnProperty,
     ObjectSetPrototypeOf,
     ObjectKeys,
@@ -296,14 +297,6 @@
       const curPath = paths[i];
       if (curPath && stat(curPath) < 1) continue;
 
-      const isDenoDirPackage = Deno.core.opSync(
-        "op_require_is_deno_dir_package",
-        curPath,
-      );
-      if (isDenoDirPackage) {
-        return curPath;
-      }
-
       if (!absoluteRequest) {
         const exportsResolved = false;
         // TODO:
@@ -314,7 +307,13 @@
         }
       }
 
-      const basePath = pathResolve(curPath, request);
+      const isDenoDirPackage = Deno.core.opSync(
+        "op_require_is_deno_dir_package",
+        curPath,
+      );
+      const basePath = isDenoDirPackage
+        ? curPath
+        : pathResolve(curPath, request);
       let filename;
 
       const rc = stat(basePath);
@@ -363,7 +362,7 @@
       const denoDirPath = core.opSync(
         "op_require_resolve_deno_dir",
         request,
-        parent,
+        parent.filename,
       );
       if (denoDirPath) {
         paths.push(denoDirPath);
@@ -749,8 +748,9 @@
     return require;
   }
 
-  function createRequire(filename) {
-    // FIXME: handle URLs and validation
+  function createRequire(filenameOrUrl) {
+    // FIXME: handle validation
+    const filename = core.opSync("op_require_as_file_path", filenameOrUrl);
     return createRequireFromPath(filename);
   }
 

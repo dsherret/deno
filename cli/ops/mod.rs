@@ -22,18 +22,25 @@ pub fn cli_exts(ps: ProcState) -> Vec<Extension> {
 }
 
 fn init_proc_state(ps: ProcState) -> Extension {
+  let unstable = ps.options.unstable();
   Extension::builder()
     .state(move |state| {
       state.put(ps.clone());
       Ok(())
     })
-    .middleware(|op| match op.name {
-      "op_require_resolve_deno_dir" => op_require_resolve_deno_dir::decl(),
-      "op_require_is_deno_dir_package" => {
-        op_require_is_deno_dir_package::decl()
+    .middleware(move |op| {
+      if !unstable {
+        // only use the ops below for `--unstable`
+        return op;
       }
-      "op_require_read_file" => op_require_read_file::decl(),
-      _ => op,
+      match op.name {
+        "op_require_resolve_deno_dir" => op_require_resolve_deno_dir::decl(),
+        "op_require_is_deno_dir_package" => {
+          op_require_is_deno_dir_package::decl()
+        }
+        "op_require_read_file" => op_require_read_file::decl(),
+        _ => op,
+      }
     })
     .build()
 }
@@ -44,7 +51,6 @@ fn op_require_resolve_deno_dir(
   request: String,
   parent_filename: String,
 ) -> Option<String> {
-  eprintln!("RESOLVING");
   let ps = s.borrow::<ProcState>();
   let referrer = ModuleSpecifier::from_file_path(parent_filename).ok()?;
   ps.npm_resolver

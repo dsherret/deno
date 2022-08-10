@@ -237,7 +237,7 @@ impl MainWorker {
     }
   }
 
-  /// Executes specified JavaScript module.
+  /// Executes specified JavaScript module without waiting for inspector.
   pub async fn evaluate_module(
     &mut self,
     id: ModuleId,
@@ -267,8 +267,7 @@ impl MainWorker {
     module_specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let id = self.preload_module(module_specifier, false).await?;
-    self.wait_for_inspector_session();
-    self.evaluate_module(id).await
+    self.execute_preloaded_module(id).await
   }
 
   /// Loads, instantiates and executes specified JavaScript module.
@@ -279,6 +278,14 @@ impl MainWorker {
     module_specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let id = self.preload_module(module_specifier, true).await?;
+    self.execute_preloaded_module(id).await
+  }
+
+  /// Executes a module that was already preloaded.
+  pub async fn execute_preloaded_module(
+    &mut self,
+    id: ModuleId,
+  ) -> Result<(), AnyError> {
     self.wait_for_inspector_session();
     self.evaluate_module(id).await
   }

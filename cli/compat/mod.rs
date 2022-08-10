@@ -133,7 +133,6 @@ pub fn all_supported_builtin_module_urls() -> Vec<Url> {
     .collect()
 }
 
-#[allow(unused)]
 pub async fn load_builtin_node_modules(
   js_runtime: &mut JsRuntime,
 ) -> Result<(), AnyError> {
@@ -345,8 +344,7 @@ pub fn translate_cjs_to_esm_new(
   let analysis = parsed_source.analyze_cjs();
 
   let mut source = vec![
-    r#"import { createRequire } from "node:module";"#.to_string(),
-    r#"const require = createRequire(import.meta.url);"#.to_string(),
+    r#"const require = Deno[Deno.internal].require.Module.createRequire(import.meta.url);"#.to_string(),
   ];
 
   // if there are reexports, handle them first
