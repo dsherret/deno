@@ -734,7 +734,6 @@ pub fn translate_cjs_to_esm(
   let mut handled_reexports: HashSet<String> = HashSet::default();
 
   let mut source = vec![
-    r#"var window = undefined;"#.to_string(),
     r#"const require = Deno[Deno.internal].require.Module.createRequire(import.meta.url);"#.to_string(),
   ];
 

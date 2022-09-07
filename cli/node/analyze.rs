@@ -22,6 +22,7 @@ static NODE_GLOBALS: &[&str] = &[
   "setImmediate",
   "setInterval",
   "setTimeout",
+  "window",
 ];
 
 // TODO(dsherret): this code is way more inefficient than it needs to be.

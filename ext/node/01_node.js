@@ -23,14 +23,14 @@
   const nodeGlobals = {};
   const nodeGlobalThis = new Proxy(globalThis, {
     get(_target, prop, _receiver) {
-      if (prop in nodeGlobals) {
+      if (prop in nodeGlobals || prop === "window") {
         return nodeGlobals[prop];
       } else {
         return globalThis[prop];
       }
     },
     set(_target, prop, value) {
-      if (prop in nodeGlobals) {
+      if (prop in nodeGlobals || prop === "window") {
         nodeGlobals[prop] = value;
       } else {
         globalThis[prop] = value;
@@ -50,7 +50,8 @@
       return success;
     },
     ownKeys(_target) {
-      const globalThisKeys = Reflect.ownKeys(globalThis);
+      const globalThisKeys = Reflect.ownKeys(globalThis)
+        .filter((k) => k !== "window");
       const nodeGlobalsKeys = Reflect.ownKeys(nodeGlobals);
       const nodeGlobalsKeySet = new Set(nodeGlobalsKeys);
       return [
@@ -62,21 +63,21 @@
       ];
     },
     defineProperty(_target, prop, desc) {
-      if (prop in nodeGlobals) {
+      if (prop in nodeGlobals || prop === "window") {
         return Reflect.defineProperty(nodeGlobals, prop, desc);
       } else {
         return Reflect.defineProperty(globalThis, prop, desc);
       }
     },
     getOwnPropertyDescriptor(_target, prop) {
-      if (prop in nodeGlobals) {
+      if (prop in nodeGlobals || prop === "window") {
         return Reflect.getOwnPropertyDescriptor(nodeGlobals, prop);
       } else {
         return Reflect.getOwnPropertyDescriptor(globalThis, prop);
       }
     },
     has(_target, prop) {
-      return prop in nodeGlobals || prop in globalThis;
+      return prop in nodeGlobals || prop !== "window" && prop in globalThis;
     },
   });
 
