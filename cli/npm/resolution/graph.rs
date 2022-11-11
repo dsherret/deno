@@ -468,7 +468,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
     package_info: &NpmPackageInfo,
   ) -> Result<(), AnyError> {
     if self.graph.has_package_req(package_req) {
-      return Ok(()); // already added, do nothing
+      return Ok(());
     }
     let node = self.resolve_node_from_info(
       &package_req.name,
@@ -627,7 +627,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
                 &dep.bare_specifier,
                 &parent_id,
                 dep,
-                package_info,
+                &package_info,
                 &visited_versions,
               )?;
               if let Some(new_parent_id) = maybe_new_parent_id {
@@ -650,7 +650,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
     specifier: &str,
     parent_id: &NpmPackageId,
     peer_dep: &NpmDependencyEntry,
-    peer_package_info: NpmPackageInfo,
+    peer_package_info: &NpmPackageInfo,
     visited_ancestor_versions: &Arc<VisitedVersionsPath>,
   ) -> Result<Option<NpmPackageId>, AnyError> {
     fn find_matching_child<'a>(
@@ -925,7 +925,7 @@ fn get_resolved_package_version_and_info(
       bail!("Could not find dist-tag '{}'.", tag)
     }
   } else {
-    for (_, version_info) in info.versions.into_iter() {
+    for version_info in info.versions.values() {
       let version = NpmVersion::parse(&version_info.version)?;
       if version_matcher.matches(&version) {
         let is_best_version = maybe_best_version
@@ -935,7 +935,7 @@ fn get_resolved_package_version_and_info(
         if is_best_version {
           maybe_best_version = Some(VersionAndInfo {
             version,
-            info: version_info,
+            info: version_info.clone(),
           });
         }
       }
@@ -2017,7 +2017,7 @@ mod test {
     for req in reqs {
       let req = NpmPackageReference::from_str(req).unwrap().req;
       resolver
-        .add_package_req(&req, api.package_info(&req.name).await.unwrap())
+        .add_package_req(&req, &api.package_info(&req.name).await.unwrap())
         .unwrap();
     }
 
