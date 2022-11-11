@@ -333,8 +333,11 @@ impl NpmResolution {
     // these package_reqs will be already sorted in the order they should
     // be added into
     for package_req in package_reqs {
-      let info = self.api.package_info(&package_req.name).await?;
-      resolver.add_package_req(&package_req, &info)?;
+      // avoid loading the info if this is already in the graph
+      if !resolver.has_package_req(&package_req) {
+        let info = self.api.package_info(&package_req.name).await?;
+        resolver.add_package_req(&package_req, &info)?;
+      }
     }
 
     resolver.resolve_pending().await?;
