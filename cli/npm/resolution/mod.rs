@@ -283,25 +283,24 @@ impl NpmResolution {
 
   async fn add_package_req_batches_to_snapshot(
     &self,
-    package_batches: NpmPackageReqBatches,
+    mut package_req_batches: NpmPackageReqBatches,
     snapshot: NpmResolutionSnapshot,
   ) -> Result<NpmResolutionSnapshot, AnyError> {
     // convert the snapshot to a traversable graph
     let mut graph = Graph::from_snapshot(snapshot);
 
-    let package_req_len = package_batches.iter().map(|b| b.len()).sum();
-    let mut unresolved_tasks = Vec::with_capacity(package_req_len);
-    let mut resolving_package_names = HashSet::with_capacity(package_req_len);
-    for mut package_reqs in package_batches {
+    // do this up-front in case
+    for package_reqs in package_req_batches.iter_mut() {
       // multiple packages are resolved in alphabetical order
       package_reqs.sort_by(|a, b| a.name.cmp(&b.name));
+    }
 
     // go over the top level package names first, then down the
     // tree one level at a time through all the branches
-    let mut unresolved_tasks = Vec::with_capacity(package_reqs.len());
-    let mut resolving_package_names =
-      HashSet::with_capacity(package_reqs.len());
-    for package_req in &package_reqs {
+    let package_req_len = package_req_batches.iter().map(|b| b.len()).sum();
+    let mut unresolved_tasks = Vec::with_capacity(package_req_len);
+    let mut resolving_package_names = HashSet::with_capacity(package_req_len);
+    for package_req in package_req_batches.iter().flatten() {
       if graph.has_package_req(package_req) {
         // skip analyzing this package, as there's already a matching top level package
         continue;
@@ -331,6 +330,8 @@ impl NpmResolution {
 
     let mut resolver = GraphDependencyResolver::new(&mut graph, &self.api);
 
+    // these package_reqs will be already sorted in the order they should
+    // be added into
     for package_req in package_reqs {
       let info = self.api.package_info(&package_req.name).await?;
       resolver.add_package_req(&package_req, &info)?;
