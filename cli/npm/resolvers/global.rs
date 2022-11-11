@@ -17,6 +17,7 @@ use deno_runtime::deno_node::TYPES_CONDITIONS;
 
 use crate::fs_util;
 use crate::lockfile::Lockfile;
+use crate::npm::resolution::NpmPackageReqBatches;
 use crate::npm::resolution::NpmResolution;
 use crate::npm::resolution::NpmResolutionSnapshot;
 use crate::npm::resolvers::common::cache_packages;
@@ -131,13 +132,16 @@ impl InnerNpmPackageResolver for GlobalNpmPackageResolver {
     self.resolution.has_packages()
   }
 
-  fn add_package_reqs(
+  fn add_package_req_batches(
     &self,
-    packages: Vec<NpmPackageReq>,
+    package_batches: NpmPackageReqBatches,
   ) -> BoxFuture<'static, Result<(), AnyError>> {
     let resolver = self.clone();
     async move {
-      resolver.resolution.add_package_reqs(packages).await?;
+      resolver
+        .resolution
+        .add_package_req_batches(package_batches)
+        .await?;
       cache_packages_in_resolver(&resolver).await
     }
     .boxed()

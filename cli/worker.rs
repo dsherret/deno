@@ -357,7 +357,7 @@ pub async fn create_main_worker(
     NpmPackageReference::from_specifier(&main_module)
   {
     ps.npm_resolver
-      .add_package_reqs(vec![package_ref.req.clone()])
+      .add_package_req_batches(vec![vec![package_ref.req.clone()]])
       .await?;
     let node_resolution = node::node_resolve_binary_export(
       &package_ref.req,

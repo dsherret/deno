@@ -415,7 +415,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
     &self,
     name: &str,
     version_matcher: &impl NpmVersionMatcher,
-    package_info: NpmPackageInfo,
+    package_info: &NpmPackageInfo,
   ) -> Result<VersionAndInfo, AnyError> {
     if let Some(version) =
       self.resolve_best_package_version(name, version_matcher)
@@ -465,8 +465,11 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
   pub fn add_package_req(
     &mut self,
     package_req: &NpmPackageReq,
-    package_info: NpmPackageInfo,
+    package_info: &NpmPackageInfo,
   ) -> Result<(), AnyError> {
+    if self.graph.has_package_req(package_req) {
+      return Ok(()); // already added, do nothing
+    }
     let node = self.resolve_node_from_info(
       &package_req.name,
       package_req,
@@ -484,7 +487,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
   fn analyze_dependency(
     &mut self,
     entry: &NpmDependencyEntry,
-    package_info: NpmPackageInfo,
+    package_info: &NpmPackageInfo,
     parent_id: &NpmPackageId,
     visited_versions: &Arc<VisitedVersionsPath>,
   ) -> Result<(), AnyError> {
@@ -536,7 +539,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
     &mut self,
     name: &str,
     version_matcher: &impl NpmVersionMatcher,
-    package_info: NpmPackageInfo,
+    package_info: &NpmPackageInfo,
   ) -> Result<Arc<Mutex<Node>>, AnyError> {
     let version_and_info = self.resolve_best_package_version_and_info(
       name,
@@ -613,7 +616,7 @@ impl<'a, TNpmRegistryApi: NpmRegistryApi>
             NpmDependencyEntryKind::Dep => {
               self.analyze_dependency(
                 dep,
-                package_info,
+                &package_info,
                 &parent_id,
                 &visited_versions,
               )?;
@@ -881,7 +884,7 @@ struct VersionAndInfo {
 fn get_resolved_package_version_and_info(
   pkg_name: &str,
   version_matcher: &impl NpmVersionMatcher,
-  info: NpmPackageInfo,
+  info: &NpmPackageInfo,
   parent: Option<&NpmPackageId>,
 ) -> Result<VersionAndInfo, AnyError> {
   let mut maybe_best_version: Option<VersionAndInfo> = None;
@@ -981,7 +984,7 @@ mod test {
     let result = get_resolved_package_version_and_info(
       "test",
       &package_ref.req,
-      NpmPackageInfo {
+      &NpmPackageInfo {
         name: "test".to_string(),
         versions: HashMap::new(),
         dist_tags: HashMap::from([(
@@ -1001,7 +1004,7 @@ mod test {
     let result = get_resolved_package_version_and_info(
       "test",
       &package_ref.req,
-      NpmPackageInfo {
+      &NpmPackageInfo {
         name: "test".to_string(),
         versions: HashMap::from([
           ("0.1.0".to_string(), NpmPackageVersionInfo::default()),

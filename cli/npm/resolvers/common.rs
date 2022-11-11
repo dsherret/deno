@@ -13,6 +13,7 @@ use deno_core::url::Url;
 
 use crate::lockfile::Lockfile;
 use crate::npm::cache::should_sync_download;
+use crate::npm::resolution::NpmPackageReqBatches;
 use crate::npm::resolution::NpmResolutionSnapshot;
 use crate::npm::NpmCache;
 use crate::npm::NpmPackageId;
@@ -41,9 +42,9 @@ pub trait InnerNpmPackageResolver: Send + Sync {
 
   fn has_packages(&self) -> bool;
 
-  fn add_package_reqs(
+  fn add_package_req_batches(
     &self,
-    packages: Vec<NpmPackageReq>,
+    package_batches: NpmPackageReqBatches,
   ) -> BoxFuture<'static, Result<(), AnyError>>;
 
   fn set_package_reqs(

@@ -27,6 +27,7 @@ use crate::lockfile::Lockfile;
 
 use self::common::InnerNpmPackageResolver;
 use self::local::LocalNpmPackageResolver;
+use super::resolution::NpmPackageReqBatches;
 use super::NpmCache;
 use super::NpmPackageId;
 use super::NpmPackageReq;
@@ -242,11 +243,11 @@ impl NpmPackageResolver {
   }
 
   /// Adds package requirements to the resolver and ensures everything is setup.
-  pub async fn add_package_reqs(
+  pub async fn add_package_req_batches(
     &self,
-    packages: Vec<NpmPackageReq>,
+    package_batches: NpmPackageReqBatches,
   ) -> Result<(), AnyError> {
-    if packages.is_empty() {
+    if package_batches.is_empty() {
       return Ok(());
     }
 
@@ -257,7 +258,10 @@ impl NpmPackageResolver {
     }
 
     if self.no_npm {
-      let fmt_reqs = packages
+      let fmt_reqs = package_batches
+        .iter()
+        .flatten()
+        .collect::<HashSet<_>>() // prevent duplicates
         .iter()
         .map(|p| format!("\"{}\"", p))
         .collect::<Vec<_>>()
@@ -271,7 +275,7 @@ impl NpmPackageResolver {
       ));
     }
 
-    self.inner.add_package_reqs(packages).await?;
+    self.inner.add_package_req_batches(package_batches).await?;
 
     // If there's a lock file, update it with all discovered npm packages
     if let Some(lockfile_mutex) = &self.maybe_lockfile {

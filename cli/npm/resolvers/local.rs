@@ -25,6 +25,7 @@ use crate::fs_util;
 use crate::lockfile::Lockfile;
 use crate::npm::cache::should_sync_download;
 use crate::npm::cache::NpmPackageCacheFolderId;
+use crate::npm::resolution::NpmPackageReqBatches;
 use crate::npm::resolution::NpmResolution;
 use crate::npm::resolution::NpmResolutionSnapshot;
 use crate::npm::NpmCache;
@@ -207,13 +208,16 @@ impl InnerNpmPackageResolver for LocalNpmPackageResolver {
     self.resolution.has_packages()
   }
 
-  fn add_package_reqs(
+  fn add_package_req_batches(
     &self,
-    packages: Vec<NpmPackageReq>,
+    package_batches: NpmPackageReqBatches,
   ) -> BoxFuture<'static, Result<(), AnyError>> {
     let resolver = self.clone();
     async move {
-      resolver.resolution.add_package_reqs(packages).await?;
+      resolver
+        .resolution
+        .add_package_req_batches(package_batches)
+        .await?;
       sync_resolver_with_fs(&resolver).await?;
       Ok(())
     }

@@ -185,12 +185,12 @@ pub trait NpmRegistryApi: Clone + Sync + Send + 'static {
   fn maybe_package_info(
     &self,
     name: &str,
-  ) -> BoxFuture<'static, Result<Option<NpmPackageInfo>, AnyError>>;
+  ) -> BoxFuture<'static, Result<Option<Arc<NpmPackageInfo>>, AnyError>>;
 
   fn package_info(
     &self,
     name: &str,
-  ) -> BoxFuture<'static, Result<NpmPackageInfo, AnyError>> {
+  ) -> BoxFuture<'static, Result<Arc<NpmPackageInfo>, AnyError>> {
     let api = self.clone();
     let name = name.to_string();
     async move {
@@ -212,10 +212,8 @@ pub trait NpmRegistryApi: Clone + Sync + Send + 'static {
     let name = name.to_string();
     let version = version.to_string();
     async move {
-      // todo(dsherret): this could be optimized to not clone the
-      // entire package info in the case of the RealNpmRegistryApi
       let mut package_info = api.package_info(&name).await?;
-      Ok(package_info.versions.remove(&version))
+      Ok(package_info.versions.get(&version).clone())
     }
     .boxed()
   }
