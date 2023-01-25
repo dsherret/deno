@@ -1,11 +1,15 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
 
 use crate::args::CaData;
+use crate::args::CliOptions;
 use crate::args::Flags;
 use crate::colors;
 use crate::file_fetcher::get_source_from_data_url;
+use crate::npm::NpmPackageId;
+use crate::npm::NpmResolutionSnapshot;
 use crate::ops;
 use crate::proc_state::ProcState;
+use crate::proc_state::ProcStateOptions;
 use crate::version;
 use crate::CliResolver;
 use deno_core::anyhow::Context;
@@ -18,7 +22,6 @@ use deno_core::futures::FutureExt;
 use deno_core::located_script_name;
 use deno_core::serde::Deserialize;
 use deno_core::serde::Serialize;
-use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_core::v8_set_flags;
 use deno_core::ModuleLoader;
@@ -57,6 +60,8 @@ pub struct Metadata {
   pub unsafely_ignore_certificate_errors: Option<Vec<String>>,
   pub maybe_import_map: Option<(Url, String)>,
   pub entrypoint: ModuleSpecifier,
+  pub npm_snapshot: NpmResolutionSnapshot,
+  pub npm_tarballs: Vec<(NpmPackageId, Vec<u8>)>,
 }
 
 pub const MAGIC_TRAILER: &[u8; 8] = b"d3n0l4nd";
@@ -92,7 +97,7 @@ pub async fn extract_standalone(
   let metadata_pos = rest;
   let eszip_archive_pos = u64_from_bytes(eszip_archive_pos)?;
   let metadata_pos = u64_from_bytes(metadata_pos)?;
-  let metadata_len = trailer_pos - metadata_pos;
+  let metadata_len = (trailer_pos - metadata_pos) as usize;
 
   bufreader.seek(SeekFrom::Start(eszip_archive_pos)).await?;
 
@@ -104,15 +109,14 @@ pub async fn extract_standalone(
 
   bufreader.seek(SeekFrom::Start(metadata_pos)).await?;
 
-  let mut metadata = String::new();
+  let mut metadata = vec![0; metadata_len];
 
   bufreader
-    .take(metadata_len)
-    .read_to_string(&mut metadata)
+    .read_exact(&mut metadata)
     .await
     .context("Failed to read metadata from the current executable")?;
 
-  let mut metadata: Metadata = serde_json::from_str(&metadata).unwrap();
+  let mut metadata: Metadata = bincode::deserialize(&metadata).unwrap();
   metadata.argv.append(&mut args[1..].to_vec());
 
   Ok(Some((metadata, eszip)))
@@ -164,7 +168,7 @@ impl ModuleLoader for EmbeddedModuleLoader {
     let module = self
       .eszip
       .get_module(module_specifier.as_str())
-      .ok_or_else(|| type_error("Module not found"));
+      .ok_or_else(|| type_error(format!("Module not found: {}", module_specifier)));
 
     let module_specifier = module_specifier.clone();
     async move {
@@ -225,7 +229,11 @@ pub async fn run(
 ) -> Result<(), AnyError> {
   let flags = metadata_to_flags(&metadata);
   let main_module = &metadata.entrypoint;
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::build(ProcStateOptions {
+    cli_options: Arc::new(CliOptions::from_flags(flags)?),
+    maybe_sender: None,
+    maybe_npm_snapshot: Some(metadata.npm_snapshot),
+  }).await?;
   let permissions = PermissionsContainer::new(Permissions::from_options(
     &metadata.permissions,
   )?);

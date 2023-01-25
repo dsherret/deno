@@ -23,6 +23,7 @@ use crate::graph_util::ModuleEntry;
 use crate::http_util::HttpClient;
 use crate::node;
 use crate::node::NodeResolution;
+use crate::npm::NpmResolutionSnapshot;
 use crate::npm::resolve_npm_package_reqs;
 use crate::npm::NpmCache;
 use crate::npm::NpmPackageReference;
@@ -69,6 +70,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+pub struct ProcStateOptions {
+  pub cli_options: Arc<CliOptions>,
+  pub maybe_npm_snapshot: Option<NpmResolutionSnapshot>,
+  pub maybe_sender: Option<tokio::sync::mpsc::UnboundedSender<Vec<PathBuf>>>,
+}
+
 /// This structure represents state of single "deno" program.
 ///
 /// It is shared by all created workers (thus V8 isolates).
@@ -111,14 +118,18 @@ impl Deref for ProcState {
 }
 
 impl ProcState {
-  pub async fn build(flags: Flags) -> Result<Self, AnyError> {
-    Self::from_options(Arc::new(CliOptions::from_flags(flags)?)).await
+  pub async fn from_flags(flags: Flags) -> Result<Self, AnyError> {
+    Self::from_cli_options(Arc::new(CliOptions::from_flags(flags)?)).await
   }
 
-  pub async fn from_options(
-    options: Arc<CliOptions>,
+  pub async fn from_cli_options(
+    cli_options: Arc<CliOptions>,
   ) -> Result<Self, AnyError> {
-    Self::build_with_sender(options, None).await
+    Self::build(ProcStateOptions {
+      cli_options,
+      maybe_sender: None,
+      maybe_npm_snapshot: None,
+    }).await
   }
 
   pub async fn build_for_file_watcher(
@@ -128,8 +139,11 @@ impl ProcState {
     // resolve the config each time
     let cli_options = Arc::new(CliOptions::from_flags(flags)?);
     let ps =
-      Self::build_with_sender(cli_options, Some(files_to_watch_sender.clone()))
-        .await?;
+      Self::build(ProcStateOptions {
+        cli_options,
+        maybe_sender: Some(files_to_watch_sender.clone()),
+        maybe_npm_snapshot: None,
+      }).await?;
 
     // Add the extra files listed in the watch flag
     if let Some(watch_paths) = ps.options.watch_paths() {
@@ -179,10 +193,11 @@ impl ProcState {
     });
   }
 
-  async fn build_with_sender(
-    cli_options: Arc<CliOptions>,
-    maybe_sender: Option<tokio::sync::mpsc::UnboundedSender<Vec<PathBuf>>>,
-  ) -> Result<Self, AnyError> {
+  pub async fn build(options: ProcStateOptions) -> Result<Self, AnyError> {
+    let cli_options = options.cli_options;
+    let maybe_npm_snapshot = options.maybe_npm_snapshot;
+    let maybe_sender = options.maybe_sender;
+
     let blob_store = BlobStore::default();
     let broadcast_channel = InMemoryBroadcastChannel::default();
     let shared_array_buffer_store = SharedArrayBufferStore::default();
@@ -270,6 +285,7 @@ impl ProcState {
       cli_options
         .resolve_local_node_modules_folder()
         .with_context(|| "Resolving local node_modules folder.")?,
+      maybe_npm_snapshot,
     );
     if let Some(lockfile) = maybe_lockfile {
       npm_resolver

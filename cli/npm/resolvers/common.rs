@@ -39,7 +39,7 @@ pub trait InnerNpmPackageResolver: Send + Sync {
     specifier: &ModuleSpecifier,
   ) -> Result<PathBuf, AnyError>;
 
-  fn package_size(&self, package_id: &NpmPackageId) -> Result<u64, AnyError>;
+  fn package_folder(&self, package_id: &NpmPackageId) -> Result<PathBuf, AnyError>;
 
   fn has_packages(&self) -> bool;
 

@@ -41,7 +41,7 @@ To grant permissions, set them before the script argument. For example:
   // TODO(bartlomieju): actually I think it will also fail if there's an import
   // map specified and bare specifier is used on the command line - this should
   // probably call `ProcState::resolve` instead
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
 
   // Run a background task that checks for available upgrades. If an earlier
   // run of this background task found a new version of Deno.
@@ -66,7 +66,7 @@ To grant permissions, set them before the script argument. For example:
 }
 
 pub async fn run_from_stdin(flags: Flags) -> Result<i32, AnyError> {
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
   let main_module = resolve_url_or_path("./$deno$stdin.ts").unwrap();
   let mut worker = create_main_worker(
     &ps,
@@ -141,7 +141,7 @@ pub async fn eval_command(
   // type, and so our "fake" specifier needs to have the proper extension.
   let main_module =
     resolve_url_or_path(&format!("./$deno$eval.{}", eval_flags.ext))?;
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
   let permissions = PermissionsContainer::new(Permissions::from_options(
     &ps.options.permissions_options(),
   )?);

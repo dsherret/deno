@@ -55,6 +55,7 @@ napi_sym.workspace = true
 atty.workspace = true
 base32 = "=0.4.0"
 base64.workspace = true
+bincode = "1.3.3"
 cache_control.workspace = true
 chrono = { version = "=0.4.22", default-features = false, features = ["clock"] }
 clap = "=3.1.12"

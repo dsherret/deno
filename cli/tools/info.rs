@@ -31,7 +31,7 @@ use crate::proc_state::ProcState;
 use crate::util::checksum;
 
 pub async fn info(flags: Flags, info_flags: InfoFlags) -> Result<(), AnyError> {
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
   if let Some(specifier) = info_flags.file {
     let specifier = resolve_url_or_path(&specifier)?;
     let graph = ps.create_graph(vec![(specifier, ModuleKind::Esm)]).await?;

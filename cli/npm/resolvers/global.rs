@@ -125,9 +125,8 @@ impl InnerNpmPackageResolver for GlobalNpmPackageResolver {
     )
   }
 
-  fn package_size(&self, package_id: &NpmPackageId) -> Result<u64, AnyError> {
-    let package_folder = self.package_folder(package_id);
-    Ok(crate::util::fs::dir_size(&package_folder)?)
+  fn package_folder(&self, package_id: &NpmPackageId) -> Result<PathBuf, AnyError> {
+    Ok(self.package_folder(package_id))
   }
 
   fn has_packages(&self) -> bool {

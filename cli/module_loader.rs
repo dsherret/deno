@@ -1,9 +1,12 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
 
 use crate::args::TsTypeLib;
+use crate::cache::NodeAnalysisCache;
 use crate::emit::emit_parsed_source;
+use crate::file_fetcher::FileFetcher;
 use crate::graph_util::ModuleEntry;
 use crate::node;
+use crate::npm::NpmPackageResolver;
 use crate::proc_state::ProcState;
 use crate::util::text_encoding::code_without_source_map;
 use crate::util::text_encoding::source_map_from_code;
@@ -14,6 +17,7 @@ use deno_core::anyhow::Context;
 use deno_core::error::AnyError;
 use deno_core::futures::future::FutureExt;
 use deno_core::futures::Future;
+use deno_core::parking_lot::Mutex;
 use deno_core::resolve_url;
 use deno_core::ModuleLoader;
 use deno_core::ModuleSource;
@@ -24,6 +28,7 @@ use deno_core::ResolutionKind;
 use deno_core::SourceMapGetter;
 use deno_runtime::permissions::PermissionsContainer;
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::str;
@@ -44,6 +49,7 @@ pub struct CliModuleLoader {
   /// "root permissions" for Web Worker.
   dynamic_permissions: PermissionsContainer,
   pub ps: ProcState,
+  npm_module_loader: NpmModuleLoader,
 }
 
 impl CliModuleLoader {
@@ -78,13 +84,6 @@ impl CliModuleLoader {
     specifier: &ModuleSpecifier,
     maybe_referrer: Option<ModuleSpecifier>,
   ) -> Result<ModuleCodeSource, AnyError> {
-    if specifier.as_str() == "node:module" {
-      return Ok(ModuleCodeSource {
-        code: deno_runtime::deno_node::MODULE_ES_SHIM.to_string(),
-        found_url: specifier.to_owned(),
-        media_type: MediaType::JavaScript,
-      });
-    }
     let graph_data = self.ps.graph_data.read();
     let found_url = graph_data.follow_redirect(specifier);
     match graph_data.get(&found_url) {
@@ -151,47 +150,11 @@ impl CliModuleLoader {
     maybe_referrer: Option<ModuleSpecifier>,
     is_dynamic: bool,
   ) -> Result<ModuleSource, AnyError> {
-    let code_source = if self.ps.npm_resolver.in_npm_package(specifier) {
-      let file_path = specifier.to_file_path().unwrap();
-      let code = std::fs::read_to_string(&file_path).with_context(|| {
-        let mut msg = "Unable to load ".to_string();
-        msg.push_str(&file_path.to_string_lossy());
-        if let Some(referrer) = &maybe_referrer {
-          msg.push_str(" imported from ");
-          msg.push_str(referrer.as_str());
-        }
-        msg
-      })?;
-
-      let code = if self.ps.cjs_resolutions.lock().contains(specifier) {
-        let mut permissions = if is_dynamic {
-          self.dynamic_permissions.clone()
-        } else {
-          self.root_permissions.clone()
-        };
-        // translate cjs to esm if it's cjs and inject node globals
-        node::translate_cjs_to_esm(
-          &self.ps.file_fetcher,
-          specifier,
-          code,
-          MediaType::Cjs,
-          &self.ps.npm_resolver,
-          &self.ps.node_analysis_cache,
-          &mut permissions,
-        )?
-      } else {
-        // only inject node globals for esm
-        node::esm_code_with_node_globals(
-          &self.ps.node_analysis_cache,
-          specifier,
-          code,
-        )?
-      };
-      ModuleCodeSource {
-        code,
-        found_url: specifier.clone(),
-        media_type: MediaType::from(specifier),
-      }
+    let code_source = if let Some(code_source) = self
+      .npm_module_loader
+      .load_sync(specifier, maybe_referrer, is_dynamic)?
+    {
+      code_source
     } else {
       self.load_prepared_module(specifier, maybe_referrer)?
     };
@@ -254,9 +217,8 @@ impl ModuleLoader for CliModuleLoader {
     _maybe_referrer: Option<String>,
     is_dynamic: bool,
   ) -> Pin<Box<dyn Future<Output = Result<(), AnyError>>>> {
-    if self.ps.npm_resolver.in_npm_package(specifier) {
-      // nothing to prepare
-      return Box::pin(deno_core::futures::future::ready(Ok(())));
+    if let Some(result) = self.npm_module_loader.prepare_load(specifier) {
+      return Box::pin(deno_core::futures::future::ready(result));
     }
 
     let specifier = specifier.clone();
@@ -319,5 +281,117 @@ impl SourceMapGetter for CliModuleLoader {
     } else {
       Some(lines[line_number].to_string())
     }
+  }
+}
+
+pub struct NpmModuleLoader {
+  npm_resolver: NpmPackageResolver,
+  cjs_resolutions: Mutex<HashSet<ModuleSpecifier>>,
+  /// The initial set of permissions used to resolve the static imports in the
+  /// worker. These are "allow all" for main worker, and parent thread
+  /// permissions for Web Worker.
+  root_permissions: PermissionsContainer,
+  /// Permissions used to resolve dynamic imports, these get passed as
+  /// "root permissions" for Web Worker.
+  dynamic_permissions: PermissionsContainer,
+  node_analysis_cache: NodeAnalysisCache,
+  file_fetcher: FileFetcher,
+}
+
+impl NpmModuleLoader {
+  pub fn resolve(
+    &self,
+    specifier: &str,
+    referrer: &ModuleSpecifier,
+    permissions: &mut PermissionsContainer,
+  ) -> Option<Result<ModuleSpecifier, AnyError>> {
+    if self.npm_resolver.in_npm_package(referrer) {
+      // we're in an npm package, so use node resolution
+      return Some(
+        self
+          .handle_node_resolve_result(node::node_resolve(
+            specifier,
+            &referrer,
+            NodeResolutionMode::Execution,
+            &self.npm_resolver,
+            permissions,
+          ))
+          .with_context(|| {
+            format!("Could not resolve '{}' from '{}'.", specifier, referrer)
+          }),
+      );
+    } else {
+      None
+    }
+  }
+
+  pub fn prepare_load(
+    &self,
+    specifier: &ModuleSpecifier,
+  ) -> Option<Result<(), AnyError>> {
+    if self.npm_resolver.in_npm_package(specifier) {
+      // nothing to prepare
+      Some(Ok(()))
+    } else {
+      None
+    }
+  }
+
+  pub fn load_sync(
+    &self,
+    specifier: &ModuleSpecifier,
+    maybe_referrer: Option<ModuleSpecifier>,
+    is_dynamic: bool,
+  ) -> Result<Option<ModuleCodeSource>, AnyError> {
+    if specifier.as_str() == "node:module" {
+      return Ok(Some(ModuleCodeSource {
+        code: deno_runtime::deno_node::MODULE_ES_SHIM.to_string(),
+        found_url: specifier.to_owned(),
+        media_type: MediaType::JavaScript,
+      }));
+    }
+    if !self.npm_resolver.in_npm_package(specifier) {
+      return Ok(None);
+    }
+    let file_path = specifier.to_file_path().unwrap();
+    let code = std::fs::read_to_string(&file_path).with_context(|| {
+      let mut msg = "Unable to load ".to_string();
+      msg.push_str(&file_path.to_string_lossy());
+      if let Some(referrer) = &maybe_referrer {
+        msg.push_str(" imported from ");
+        msg.push_str(referrer.as_str());
+      }
+      msg
+    })?;
+
+    let code = if self.cjs_resolutions.lock().contains(specifier) {
+      let mut permissions = if is_dynamic {
+        self.dynamic_permissions.clone()
+      } else {
+        self.root_permissions.clone()
+      };
+      // translate cjs to esm if it's cjs and inject node globals
+      node::translate_cjs_to_esm(
+        &self.file_fetcher,
+        specifier,
+        code,
+        MediaType::Cjs,
+        &self.npm_resolver,
+        &self.node_analysis_cache,
+        &mut permissions,
+      )?
+    } else {
+      // only inject node globals for esm
+      node::esm_code_with_node_globals(
+        &self.node_analysis_cache,
+        specifier,
+        code,
+      )?
+    };
+    Ok(Some(ModuleCodeSource {
+      code,
+      found_url: specifier.clone(),
+      media_type: MediaType::from(specifier),
+    }))
   }
 }

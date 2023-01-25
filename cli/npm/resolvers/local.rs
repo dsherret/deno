@@ -110,20 +110,7 @@ impl LocalNpmPackageResolver {
     specifier.to_file_path().ok()
   }
 
-  fn get_package_id_folder(
-    &self,
-    package_id: &NpmPackageId,
-  ) -> Result<PathBuf, AnyError> {
-    match self.resolution.resolve_package_from_id(package_id) {
-      Some(package) => Ok(self.get_package_id_folder_from_package(&package)),
-      None => bail!(
-        "Could not find package information for '{}'",
-        package_id.as_serialized()
-      ),
-    }
-  }
-
-  fn get_package_id_folder_from_package(
+  fn package_id_folder_from_package(
     &self,
     package: &NpmResolutionPackage,
   ) -> PathBuf {
@@ -146,7 +133,7 @@ impl InnerNpmPackageResolver for LocalNpmPackageResolver {
     pkg_req: &NpmPackageReq,
   ) -> Result<PathBuf, AnyError> {
     let package = self.resolution.resolve_package_from_deno_module(pkg_req)?;
-    Ok(self.get_package_id_folder_from_package(&package))
+    Ok(self.package_id_folder_from_package(&package))
   }
 
   fn resolve_package_folder_from_package(
@@ -203,10 +190,14 @@ impl InnerNpmPackageResolver for LocalNpmPackageResolver {
     Ok(package_root_path)
   }
 
-  fn package_size(&self, package_id: &NpmPackageId) -> Result<u64, AnyError> {
-    let package_folder_path = self.get_package_id_folder(package_id)?;
-
-    Ok(crate::util::fs::dir_size(&package_folder_path)?)
+  fn package_folder(&self, package_id: &NpmPackageId) -> Result<PathBuf, AnyError> {
+    match self.resolution.resolve_package_from_id(package_id) {
+      Some(package) => Ok(self.package_id_folder_from_package(&package)),
+      None => bail!(
+        "Could not find package information for '{}'",
+        package_id.as_serialized()
+      ),
+    }
   }
 
   fn has_packages(&self) -> bool {

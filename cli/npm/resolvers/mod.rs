@@ -94,14 +94,38 @@ impl NpmPackageResolver {
     api: RealNpmRegistryApi,
     no_npm: bool,
     local_node_modules_path: Option<PathBuf>,
+    initial_snapshot: Option<NpmResolutionSnapshot>,
   ) -> Self {
-    Self::new_with_maybe_snapshot(
-      cache,
-      api,
+    let process_npm_state = NpmProcessState::take();
+    let local_node_modules_path = local_node_modules_path.or_else(|| {
+      process_npm_state
+        .as_ref()
+        .and_then(|s| s.local_node_modules_path.as_ref().map(PathBuf::from))
+    });
+    let maybe_snapshot =
+      initial_snapshot.or_else(|| process_npm_state.map(|s| s.snapshot));
+    let inner: Arc<dyn InnerNpmPackageResolver> = match &local_node_modules_path
+    {
+      Some(node_modules_folder) => Arc::new(LocalNpmPackageResolver::new(
+        cache.clone(),
+        api.clone(),
+        node_modules_folder.clone(),
+        maybe_snapshot,
+      )),
+      None => Arc::new(GlobalNpmPackageResolver::new(
+        cache.clone(),
+        api.clone(),
+        maybe_snapshot,
+      )),
+    };
+    Self {
       no_npm,
+      inner,
       local_node_modules_path,
-      None,
-    )
+      api,
+      cache,
+      maybe_lockfile: None,
+    }
   }
 
   /// This function will replace current resolver with a new one built from a
@@ -140,45 +164,6 @@ impl NpmPackageResolver {
       ));
     }
     Ok(())
-  }
-
-  fn new_with_maybe_snapshot(
-    cache: NpmCache,
-    api: RealNpmRegistryApi,
-    no_npm: bool,
-    local_node_modules_path: Option<PathBuf>,
-    initial_snapshot: Option<NpmResolutionSnapshot>,
-  ) -> Self {
-    let process_npm_state = NpmProcessState::take();
-    let local_node_modules_path = local_node_modules_path.or_else(|| {
-      process_npm_state
-        .as_ref()
-        .and_then(|s| s.local_node_modules_path.as_ref().map(PathBuf::from))
-    });
-    let maybe_snapshot =
-      initial_snapshot.or_else(|| process_npm_state.map(|s| s.snapshot));
-    let inner: Arc<dyn InnerNpmPackageResolver> = match &local_node_modules_path
-    {
-      Some(node_modules_folder) => Arc::new(LocalNpmPackageResolver::new(
-        cache.clone(),
-        api.clone(),
-        node_modules_folder.clone(),
-        maybe_snapshot,
-      )),
-      None => Arc::new(GlobalNpmPackageResolver::new(
-        cache.clone(),
-        api.clone(),
-        maybe_snapshot,
-      )),
-    };
-    Self {
-      no_npm,
-      inner,
-      local_node_modules_path,
-      api,
-      cache,
-      maybe_lockfile: None,
-    }
   }
 
   /// Resolves an npm package folder path from a Deno module.
@@ -235,7 +220,18 @@ impl NpmPackageResolver {
     &self,
     package_id: &NpmPackageId,
   ) -> Result<u64, AnyError> {
-    self.inner.package_size(package_id)
+    let package_folder = self.inner.package_folder(package_id)?;
+    Ok(crate::util::fs::dir_size(&package_folder)?)
+  }
+
+  /// Gets a tarball of the npm package.
+  pub fn package_tarball(&self, package_id: &NpmPackageId) -> Result<Vec<u8>, AnyError> {
+    let package_folder = self.inner.package_folder(package_id)?;
+
+    let encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    let mut ar = tar::Builder::new(encoder);
+    ar.append_dir_all(".", package_folder)?;
+    Ok(ar.into_inner()?.finish()?)
   }
 
   /// Gets if the provided specifier is in an npm package.
@@ -320,7 +316,7 @@ impl NpmPackageResolver {
 
   /// Gets a new resolver with a new snapshotted state.
   pub fn snapshotted(&self) -> Self {
-    Self::new_with_maybe_snapshot(
+    Self::new(
       self.cache.clone(),
       self.api.clone(),
       self.no_npm,

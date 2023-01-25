@@ -5,8 +5,9 @@ use crate::args::CompileFlags;
 use crate::args::Flags;
 use crate::cache::DenoDir;
 use crate::graph_util::create_graph_and_maybe_check;
-use crate::graph_util::error_for_any_npm_specifier;
 use crate::http_util::HttpClient;
+use crate::npm::NpmPackageId;
+use crate::npm::NpmResolutionSnapshot;
 use crate::standalone::Metadata;
 use crate::standalone::MAGIC_TRAILER;
 use crate::util::path::path_has_trailing_slash;
@@ -18,7 +19,6 @@ use deno_core::anyhow::Context;
 use deno_core::error::generic_error;
 use deno_core::error::AnyError;
 use deno_core::resolve_url_or_path;
-use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_graph::ModuleSpecifier;
 use deno_runtime::colors;
@@ -40,7 +40,7 @@ pub async fn compile(
   flags: Flags,
   compile_flags: CompileFlags,
 ) -> Result<(), AnyError> {
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
   let module_specifier = resolve_url_or_path(&compile_flags.source_file)?;
   let deno_dir = &ps.dir;
 
@@ -50,9 +50,6 @@ pub async fn compile(
     create_graph_and_maybe_check(module_specifier.clone(), &ps).await?,
   )
   .unwrap();
-
-  // at the moment, we don't support npm specifiers in deno_compile, so show an error
-  error_for_any_npm_specifier(&graph)?;
 
   graph.valid()?;
 
@@ -182,6 +179,8 @@ async fn create_standalone_binary(
         Some((import_map_specifier, file.source.to_string()))
       }
     };
+  let npm_snapshot = ps.npm_resolver.snapshot();
+  let npm_tarballs = get_npm_package_tarballs(&ps, &npm_snapshot)?;
   let metadata = Metadata {
     argv: compile_flags.args.clone(),
     unstable: ps.options.unstable(),
@@ -198,8 +197,10 @@ async fn create_standalone_binary(
     ca_data,
     entrypoint,
     maybe_import_map,
+    npm_snapshot,
+    npm_tarballs,
   };
-  let mut metadata = serde_json::to_string(&metadata)?.as_bytes().to_vec();
+  let mut metadata: Vec<u8> = bincode::serialize(&metadata)?;
 
   let eszip_pos = original_bin.len();
   let metadata_pos = eszip_pos + eszip_archive.len();
@@ -216,6 +217,16 @@ async fn create_standalone_binary(
   final_bin.append(&mut trailer);
 
   Ok(final_bin)
+}
+
+fn get_npm_package_tarballs(ps: &ProcState, snapshot: &NpmResolutionSnapshot) -> Result<Vec<(NpmPackageId, Vec<u8>)>, AnyError> {
+  let all_packages = snapshot.all_packages();
+  let mut result = Vec::with_capacity(all_packages.len());
+  for package in all_packages {
+    let tarball = ps.npm_resolver.package_tarball(&package.id)?;
+    result.push((package.id, tarball));
+  }
+  Ok(result)
 }
 
 /// This function writes out a final binary to specified path. If output path

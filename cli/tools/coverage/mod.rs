@@ -615,7 +615,7 @@ pub async fn cover_files(
     return Err(generic_error("No matching coverage profiles found"));
   }
 
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
 
   let script_coverages = collect_coverages(coverage_flags.files)?;
   let script_coverages = filter_coverages(
