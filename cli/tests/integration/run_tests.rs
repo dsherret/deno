@@ -12,6 +12,7 @@ use tokio::task::LocalSet;
 use trust_dns_client::serialize::txt::Lexer;
 use trust_dns_client::serialize::txt::Parser;
 use util::assert_contains;
+use util::env_vars_for_npm_tests_no_sync_download;
 
 itest!(stdout_write_all {
   args: "run --quiet run/stdout_write_all.ts",
@@ -545,6 +546,21 @@ itest!(_089_run_allow_list {
 #[test]
 fn _090_run_permissions_request() {
   let args = "run --quiet run/090_run_permissions_request.ts";
+  use util::PtyData::*;
+  util::test_pty2(args, vec![
+    Output("⚠️  ️Deno requests run access to \"ls\". Run again with --allow-run to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)]"),
+    Input("y\n"),
+    Output("⚠️  ️Deno requests run access to \"cat\". Run again with --allow-run to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)]"),
+    Input("n\n"),
+    Output("granted\r\n"),
+    Output("prompt\r\n"),
+    Output("denied\r\n"),
+  ]);
+}
+
+#[test]
+fn _090_run_permissions_request_sync() {
+  let args = "run --quiet run/090_run_permissions_request_sync.ts";
   use util::PtyData::*;
   util::test_pty2(args, vec![
     Output("⚠️  ️Deno requests run access to \"ls\". Run again with --allow-run to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)]"),
@@ -1135,6 +1151,12 @@ itest!(unbuffered_stdout {
 
 itest!(v8_flags_run {
   args: "run --v8-flags=--expose-gc run/v8_flags.js",
+  output: "run/v8_flags.js.out",
+});
+
+itest!(v8_flags_env_run {
+  envs: vec![("DENO_V8_FLAGS".to_string(), "--expose-gc".to_string())],
+  args: "run run/v8_flags.js",
   output: "run/v8_flags.js.out",
 });
 
@@ -2272,6 +2294,21 @@ mod permissions {
   }
 
   #[test]
+  fn _061_permissions_request_sync() {
+    let args = "run --quiet run/061_permissions_request_sync.ts";
+    use util::PtyData::*;
+    util::test_pty2(args, vec![
+    Output("⚠️  ️Deno requests read access to \"foo\". Run again with --allow-read to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)] "),
+    Input("y\n"),
+    Output("⚠️  ️Deno requests read access to \"bar\". Run again with --allow-read to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)]"),
+    Input("n\n"),
+    Output("granted\r\n"),
+    Output("prompt\r\n"),
+    Output("denied\r\n"),
+  ]);
+  }
+
+  #[test]
   fn _062_permissions_request_global() {
     let args = "run --quiet run/062_permissions_request_global.ts";
     use util::PtyData::*;
@@ -2284,13 +2321,36 @@ mod permissions {
     ]);
   }
 
+  #[test]
+  fn _062_permissions_request_global_sync() {
+    let args = "run --quiet run/062_permissions_request_global_sync.ts";
+    use util::PtyData::*;
+    util::test_pty2(args, vec![
+    Output("⚠️  ️Deno requests read access. Run again with --allow-read to bypass this prompt.\r\n   Allow? [y/n (y = yes allow, n = no deny)] "),
+    Input("y\n"),
+    Output("PermissionStatus { state: \"granted\", onchange: null }\r\n"),
+    Output("PermissionStatus { state: \"granted\", onchange: null }\r\n"),
+    Output("PermissionStatus { state: \"granted\", onchange: null }\r\n"),
+  ]);
+  }
+
   itest!(_063_permissions_revoke {
     args: "run --allow-read=foo,bar run/063_permissions_revoke.ts",
     output: "run/063_permissions_revoke.ts.out",
   });
 
+  itest!(_063_permissions_revoke_sync {
+    args: "run --allow-read=foo,bar run/063_permissions_revoke_sync.ts",
+    output: "run/063_permissions_revoke.ts.out",
+  });
+
   itest!(_064_permissions_revoke_global {
     args: "run --allow-read=foo,bar run/064_permissions_revoke_global.ts",
+    output: "run/064_permissions_revoke_global.ts.out",
+  });
+
+  itest!(_064_permissions_revoke_global_sync {
+    args: "run --allow-read=foo,bar run/064_permissions_revoke_global_sync.ts",
     output: "run/064_permissions_revoke_global.ts.out",
   });
 
@@ -2599,6 +2659,11 @@ itest!(colors_without_global_this {
 itest!(config_auto_discovered_for_local_script {
   args: "run --quiet run/with_config/frontend_work.ts",
   output_str: Some("ok\n"),
+});
+
+itest!(config_auto_discovered_for_local_script_log {
+  args: "run -L debug run/with_config/frontend_work.ts",
+  output: "run/with_config/auto_discovery_log.out",
 });
 
 itest!(no_config_auto_discovery_for_local_script {
@@ -3743,3 +3808,24 @@ fn stdio_streams_are_locked_in_permission_prompt() {
     assert_eq!(output, expected_output);
   });
 }
+
+itest!(node_builtin_modules_ts {
+  args: "run --quiet run/node_builtin_modules/mod.ts",
+  output: "run/node_builtin_modules/mod.ts.out",
+  envs: env_vars_for_npm_tests_no_sync_download(),
+  exit_code: 0,
+});
+
+itest!(node_builtin_modules_js {
+  args: "run --quiet run/node_builtin_modules/mod.js",
+  output: "run/node_builtin_modules/mod.js.out",
+  envs: env_vars_for_npm_tests_no_sync_download(),
+  exit_code: 0,
+});
+
+itest!(node_prefix_missing {
+  args: "run --quiet run/node_prefix_missing/main.ts",
+  output: "run/node_prefix_missing/main.ts.out",
+  envs: env_vars_for_npm_tests_no_sync_download(),
+  exit_code: 1,
+});
