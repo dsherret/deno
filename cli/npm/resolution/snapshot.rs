@@ -104,14 +104,20 @@ impl NpmResolutionSnapshot {
     }
   }
 
+  pub fn package_reqs_to_id(&self) -> &HashMap<NpmPackageReq, NpmPackageId> {
+    &self.package_reqs
+  }
+
   pub fn top_level_packages(&self) -> Vec<NpmPackageId> {
-    self
+    let mut result = self
       .package_reqs
       .values()
       .cloned()
       .collect::<HashSet<_>>()
       .into_iter()
-      .collect::<Vec<_>>()
+      .collect::<Vec<_>>();
+    result.sort(); // be deterministic
+    result
   }
 
   pub fn package_from_id(

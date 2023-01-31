@@ -1,5 +1,6 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -40,9 +41,7 @@ pub trait NpmVersionMatcher {
   fn version_text(&self) -> String;
 }
 
-#[derive(
-  Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NpmPackageId {
   pub name: String,
   pub version: NpmVersion,
@@ -180,6 +179,38 @@ impl NpmPackageId {
     // Don't implement std::fmt::Display because we don't
     // want this to be used by accident in certain scenarios.
     format!("{}@{}", self.name, self.version)
+  }
+}
+
+impl Ord for NpmPackageId {
+  fn cmp(&self, other: &Self) -> Ordering {
+    // compare the names
+    match self.name.cmp(&other.name) {
+      Ordering::Equal => {}
+      name_cmp => return name_cmp,
+    }
+    // then the versions
+    match self.version.cmp(&other.version) {
+      Ordering::Equal => {}
+      version_cmp => return version_cmp,
+    }
+    // select the one with the least number of dependencies
+    match self
+      .peer_dependencies
+      .len()
+      .cmp(&other.peer_dependencies.len())
+    {
+      Ordering::Equal => {}
+      peer_dep_len_cmp => return peer_dep_len_cmp,
+    }
+    // finally compare the peer dependencies
+    self.peer_dependencies.cmp(&other.peer_dependencies)
+  }
+}
+
+impl PartialOrd for NpmPackageId {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
   }
 }
 

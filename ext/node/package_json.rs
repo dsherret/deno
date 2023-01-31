@@ -11,6 +11,7 @@ use deno_core::serde_json;
 use deno_core::serde_json::Map;
 use deno_core::serde_json::Value;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::PathBuf;
@@ -30,6 +31,7 @@ pub struct PackageJson {
   pub types: Option<String>,
   pub dependencies: Option<HashMap<String, String>>,
   pub dev_dependencies: Option<HashMap<String, String>>,
+  pub scripts: Option<BTreeMap<String, String>>,
 }
 
 impl PackageJson {
@@ -48,6 +50,7 @@ impl PackageJson {
       types: None,
       dependencies: None,
       dev_dependencies: None,
+      scripts: None,
     }
   }
 
@@ -125,6 +128,9 @@ impl PackageJson {
         None
       }
     });
+    let scripts: Option<BTreeMap<String, String>> = package_json
+      .get("scripts")
+      .and_then(|d| serde_json::from_value(d.to_owned()).ok());
 
     // Ignore unknown types for forwards compatibility
     let typ = if let Some(t) = type_val {
@@ -161,6 +167,7 @@ impl PackageJson {
       bin,
       dependencies,
       dev_dependencies,
+      scripts,
     };
     Ok(package_json)
   }
