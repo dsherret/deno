@@ -33,6 +33,7 @@ pub use http_cache::HttpCache;
 pub use incremental::IncrementalCache;
 pub use node::NodeAnalysisCache;
 pub use parsed_source::ParsedSourceCache;
+pub use parsed_source::ParsedSourceCacheOptions;
 
 /// Permissions used to save a file in the disk caches.
 pub const CACHE_PERM: u32 = 0o644;

@@ -123,6 +123,10 @@ async fn run_subcommand(flags: Flags) -> Result<i32, AnyError> {
       }
       Ok(0)
     }
+    DenoSubcommand::Pack(pack_flags) => {
+      tools::pack::pack(flags, pack_flags).await?;
+      Ok(0)
+    }
     DenoSubcommand::Repl(repl_flags) => {
       tools::repl::run(flags, repl_flags).await
     }

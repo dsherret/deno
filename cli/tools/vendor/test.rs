@@ -20,6 +20,7 @@ use deno_graph::ModuleGraph;
 use import_map::ImportMap;
 
 use crate::cache::ParsedSourceCache;
+use crate::cache::ParsedSourceCacheOptions;
 use crate::npm::NpmRegistryApi;
 use crate::npm::NpmResolution;
 use crate::npm::PackageJsonDepsInstaller;
@@ -218,7 +219,11 @@ impl VendorTestBuilder {
     let output_dir = make_path("/vendor");
     let roots = self.entry_points.clone();
     let loader = self.loader.clone();
-    let parsed_source_cache = ParsedSourceCache::new(None);
+    let parsed_source_cache =
+      ParsedSourceCache::new(ParsedSourceCacheOptions {
+        sql_cache_path: None,
+        use_analysis_parser: false,
+      });
     let analyzer = parsed_source_cache.as_analyzer();
     let graph = build_test_graph(
       roots,

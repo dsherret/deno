@@ -13,6 +13,7 @@ use deno_core::parking_lot::Mutex;
 use deno_core::serde_json;
 use deno_graph::CapturingModuleParser;
 use deno_graph::DefaultModuleAnalyzer;
+use deno_graph::DefaultModuleParser;
 use deno_graph::ModuleInfo;
 use deno_graph::ModuleParser;
 use deno_graph::ParsedSourceStore;
@@ -49,19 +50,30 @@ impl deno_graph::ParsedSourceStore for ParsedSourceCacheSources {
   }
 }
 
+pub struct ParsedSourceCacheOptions {
+  pub sql_cache_path: Option<PathBuf>,
+  pub use_analysis_parser: bool,
+}
+
 /// A cache of `ParsedSource`s, which may be used with `deno_graph`
 /// for cached dependency analysis.
 #[derive(Clone)]
 pub struct ParsedSourceCache {
   db_cache_path: Option<PathBuf>,
+  parser: DefaultModuleParser,
   cli_version: String,
   sources: ParsedSourceCacheSources,
 }
 
 impl ParsedSourceCache {
-  pub fn new(sql_cache_path: Option<PathBuf>) -> Self {
+  pub fn new(options: ParsedSourceCacheOptions) -> Self {
     Self {
-      db_cache_path: sql_cache_path,
+      db_cache_path: options.sql_cache_path,
+      parser: if options.use_analysis_parser {
+        DefaultModuleParser::new_for_analysis()
+      } else {
+        DefaultModuleParser::new()
+      },
       cli_version: crate::version::deno(),
       sources: Default::default(),
     }
@@ -70,6 +82,7 @@ impl ParsedSourceCache {
   pub fn reset_for_file_watcher(&self) -> Self {
     Self {
       db_cache_path: self.db_cache_path.clone(),
+      parser: self.parser.clone(),
       cli_version: self.cli_version.clone(),
       sources: Default::default(),
     }
@@ -129,7 +142,7 @@ impl ParsedSourceCache {
         log::error!("Could not create cached module analyzer, cache file '{file}' may be corrupt: {:#}", err);
         // fallback to not caching if it can't be created
         Box::new(deno_graph::CapturingModuleAnalyzer::new(
-          None,
+          Some(Box::new(self.parser.clone())),
           Some(self.as_store()),
         ))
       }
@@ -139,7 +152,7 @@ impl ParsedSourceCache {
   /// Creates a parser that will reuse a ParsedSource from the store
   /// if it exists, or else parse.
   pub fn as_capturing_parser(&self) -> CapturingModuleParser {
-    CapturingModuleParser::new(None, &self.sources)
+    CapturingModuleParser::new(Some(&self.parser), &self.sources)
   }
 }
 

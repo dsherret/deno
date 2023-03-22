@@ -14,6 +14,7 @@ use crate::cache::FastInsecureHasher;
 use crate::cache::HttpCache;
 use crate::cache::NodeAnalysisCache;
 use crate::cache::ParsedSourceCache;
+use crate::cache::ParsedSourceCacheOptions;
 use crate::cache::TypeCheckCache;
 use crate::emit::emit_parsed_source;
 use crate::file_fetcher::FileFetcher;
@@ -283,7 +284,13 @@ impl ProcState {
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
     let parsed_source_cache =
-      ParsedSourceCache::new(Some(dir.dep_analysis_db_file_path()));
+      ParsedSourceCache::new(ParsedSourceCacheOptions {
+        sql_cache_path: Some(dir.dep_analysis_db_file_path()),
+        use_analysis_parser: matches!(
+          cli_options.sub_command(),
+          DenoSubcommand::Pack(_)
+        ),
+      });
     let npm_cache = NpmCache::from_deno_dir(
       &dir,
       cli_options.cache_setting(),

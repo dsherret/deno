@@ -178,6 +178,12 @@ pub struct LintFlags {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackFlags {
+  pub source_file: String,
+  pub out_file: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReplFlags {
   pub eval_files: Option<Vec<String>>,
   pub eval: Option<String>,
@@ -248,6 +254,7 @@ pub enum DenoSubcommand {
   Uninstall(UninstallFlags),
   Lsp,
   Lint(LintFlags),
+  Pack(PackFlags),
   Repl(ReplFlags),
   Run(RunFlags),
   Task(TaskFlags),
@@ -677,6 +684,7 @@ pub fn flags_from_vec(args: Vec<String>) -> clap::Result<Flags> {
     Some(("install", m)) => install_parse(&mut flags, m),
     Some(("lint", m)) => lint_parse(&mut flags, m),
     Some(("lsp", m)) => lsp_parse(&mut flags, m),
+    Some(("pack", m)) => pack_parse(&mut flags, m),
     Some(("repl", m)) => repl_parse(&mut flags, m),
     Some(("run", m)) => run_parse(&mut flags, m),
     Some(("task", m)) => task_parse(&mut flags, m, &args),
@@ -759,6 +767,7 @@ fn clap_root(version: &str) -> Command {
     .subcommand(uninstall_subcommand())
     .subcommand(lsp_subcommand())
     .subcommand(lint_subcommand())
+    .subcommand(pack_subcommand())
     .subcommand(repl_subcommand())
     .subcommand(run_subcommand())
     .subcommand(task_subcommand())
@@ -1582,6 +1591,34 @@ Ignore linting a file by adding an ignore comment at the top of the file:
     )
     .arg(watch_arg(false))
     .arg(no_clear_screen_arg())
+}
+
+fn pack_subcommand<'a>() -> Command<'a> {
+  compile_args(Command::new("pack"))
+    .arg(
+      Arg::new("source_file")
+        .takes_value(true)
+        .required(true)
+        .value_hint(ValueHint::FilePath),
+    )
+    .arg(
+      Arg::new("out_file")
+        .takes_value(true)
+        .required(false)
+        .value_hint(ValueHint::FilePath),
+    )
+    .arg(watch_arg(false))
+    .arg(no_clear_screen_arg())
+    .about("UNSTABLE: Concatenate module and dependencies")
+    .long_about(
+      "Output a concatenated JavaScript file.
+
+  deno pack https://deno.land/std/examples/colors.ts colors.bundle.js
+
+If no output file is given, the output is written to standard output:
+
+  deno pack https://deno.land/std/examples/colors.ts",
+    )
 }
 
 fn repl_subcommand<'a>() -> Command<'a> {
@@ -2791,6 +2828,28 @@ fn lint_parse(flags: &mut Flags, matches: &clap::ArgMatches) {
 
     json,
     compact,
+  });
+}
+
+fn pack_parse(flags: &mut Flags, matches: &clap::ArgMatches) {
+  flags.type_check_mode = TypeCheckMode::Local;
+
+  compile_args_parse(flags, matches);
+
+  let source_file = matches.value_of("source_file").unwrap().to_string();
+
+  let out_file = if let Some(out_file) = matches.value_of("out_file") {
+    flags.allow_write = Some(vec![]);
+    Some(PathBuf::from(out_file))
+  } else {
+    None
+  };
+
+  watch_arg_parse(flags, matches, false);
+
+  flags.subcommand = DenoSubcommand::Pack(PackFlags {
+    source_file,
+    out_file,
   });
 }
 
