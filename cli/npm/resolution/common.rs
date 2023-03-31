@@ -17,17 +17,14 @@ pub fn resolve_best_package_version_and_info<'info, 'version>(
   version_req: &VersionReq,
   package_info: &'info NpmPackageInfo,
   existing_versions: impl Iterator<Item = &'version Version>,
-) -> Result<VersionAndInfo<'info>, AnyError> {
+) -> Result<&'info NpmPackageVersionInfo, AnyError> {
   if let Some(version) = resolve_best_from_existing_versions(
     version_req,
     package_info,
     existing_versions,
   )? {
-    match package_info.versions.get(&version.to_string()) {
-      Some(version_info) => Ok(VersionAndInfo {
-        version,
-        info: version_info,
-      }),
+    match package_info.versions.get(version) {
+      Some(version_info) => Ok(version_info),
       None => {
         bail!(
           "could not find version '{}' for '{}'",
@@ -42,33 +39,24 @@ pub fn resolve_best_package_version_and_info<'info, 'version>(
   }
 }
 
-#[derive(Clone)]
-pub struct VersionAndInfo<'a> {
-  pub version: Version,
-  pub info: &'a NpmPackageVersionInfo,
-}
-
 fn get_resolved_package_version_and_info<'a>(
   version_req: &VersionReq,
   info: &'a NpmPackageInfo,
   parent: Option<&NpmPackageId>,
-) -> Result<VersionAndInfo<'a>, AnyError> {
+) -> Result<&'a NpmPackageVersionInfo, AnyError> {
   if let Some(tag) = version_req.tag() {
     tag_to_version_info(info, tag, parent)
   } else {
-    let mut maybe_best_version: Option<VersionAndInfo> = None;
+    let mut maybe_best_version: Option<&'a NpmPackageVersionInfo> = None;
     for version_info in info.versions.values() {
-      let version = Version::parse_from_npm(&version_info.version)?;
-      if version_req.matches(&version) {
+      let version = &version_info.version;
+      if version_req.matches(version) {
         let is_best_version = maybe_best_version
           .as_ref()
-          .map(|best_version| best_version.version.cmp(&version).is_lt())
+          .map(|best_version| best_version.version.cmp(version).is_lt())
           .unwrap_or(true);
         if is_best_version {
-          maybe_best_version = Some(VersionAndInfo {
-            version,
-            info: version_info,
-          });
+          maybe_best_version = Some(version_info);
         }
       }
     }
@@ -108,8 +96,8 @@ pub fn version_req_satisfies(
 ) -> Result<bool, AnyError> {
   match version_req.tag() {
     Some(tag) => {
-      let tag_version = tag_to_version_info(package_info, tag, parent)?.version;
-      Ok(tag_version == *version)
+      let tag_version_info = tag_to_version_info(package_info, tag, parent)?;
+      Ok(&tag_version_info.version == version)
     }
     None => Ok(version_req.matches(version)),
   }
@@ -119,8 +107,8 @@ fn resolve_best_from_existing_versions<'a>(
   version_req: &VersionReq,
   package_info: &NpmPackageInfo,
   existing_versions: impl Iterator<Item = &'a Version>,
-) -> Result<Option<Version>, AnyError> {
-  let mut maybe_best_version: Option<&Version> = None;
+) -> Result<Option<&'a Version>, AnyError> {
+  let mut maybe_best_version: Option<&'a Version> = None;
   for version in existing_versions {
     if version_req_satisfies(version_req, version, package_info, None)? {
       let is_best_version = maybe_best_version
@@ -132,14 +120,14 @@ fn resolve_best_from_existing_versions<'a>(
       }
     }
   }
-  Ok(maybe_best_version.cloned())
+  Ok(maybe_best_version)
 }
 
 fn tag_to_version_info<'a>(
   info: &'a NpmPackageInfo,
   tag: &str,
   parent: Option<&NpmPackageId>,
-) -> Result<VersionAndInfo<'a>, AnyError> {
+) -> Result<&'a NpmPackageVersionInfo, AnyError> {
   // For when someone just specifies @types/node, we want to pull in a
   // "known good" version of @types/node that works well with Deno and
   // not necessarily the latest version. For example, we might only be
@@ -159,10 +147,7 @@ fn tag_to_version_info<'a>(
 
   if let Some(version) = info.dist_tags.get(tag) {
     match info.versions.get(version) {
-      Some(info) => Ok(VersionAndInfo {
-        version: Version::parse_from_npm(version)?,
-        info,
-      }),
+      Some(info) => Ok(info),
       None => {
         bail!(
           "Could not find version '{}' referenced in dist-tag '{}'.",
@@ -193,7 +178,7 @@ mod test {
       versions: HashMap::new(),
       dist_tags: HashMap::from([(
         "latest".to_string(),
-        "1.0.0-alpha".to_string(),
+        Version::parse_from_npm("1.0.0-alpha").unwrap(),
       )]),
     };
     let result = get_resolved_package_version_and_info(
@@ -215,18 +200,21 @@ mod test {
     let package_info = NpmPackageInfo {
       name: "test".to_string(),
       versions: HashMap::from([
-        ("0.1.0".to_string(), NpmPackageVersionInfo::default()),
         (
-          "1.0.0-alpha".to_string(),
+          Version::parse_from_npm("0.1.0").unwrap(),
+          NpmPackageVersionInfo::default(),
+        ),
+        (
+          Version::parse_from_npm("1.0.0-alpha").unwrap(),
           NpmPackageVersionInfo {
-            version: "0.1.0-alpha".to_string(),
+            version: Version::parse_from_npm("1.0.0-alpha").unwrap(),
             ..Default::default()
           },
         ),
       ]),
       dist_tags: HashMap::from([(
         "latest".to_string(),
-        "1.0.0-alpha".to_string(),
+        Version::parse_from_npm("1.0.0-alpha").unwrap(),
       )]),
     };
     let result = get_resolved_package_version_and_info(

@@ -437,7 +437,7 @@ impl NpmResolution {
       };
     let id = NpmPackageNv {
       name: package_info.name.to_string(),
-      version: version_and_info.version,
+      version: version_and_info.version.clone(),
     };
     debug!(
       "Resolved {}@{} to {}",

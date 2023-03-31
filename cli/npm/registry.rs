@@ -20,6 +20,7 @@ use deno_core::serde::Deserialize;
 use deno_core::serde_json;
 use deno_core::url::Url;
 use deno_graph::npm::NpmPackageNv;
+use deno_graph::semver::Version;
 use deno_graph::semver::VersionReq;
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -39,9 +40,9 @@ use super::cache::NpmCache;
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct NpmPackageInfo {
   pub name: String,
-  pub versions: HashMap<String, NpmPackageVersionInfo>,
+  pub versions: HashMap<Version, NpmPackageVersionInfo>,
   #[serde(rename = "dist-tags")]
-  pub dist_tags: HashMap<String, String>,
+  pub dist_tags: HashMap<String, Version>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -105,7 +106,7 @@ pub enum NpmPackageVersionBinEntry {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct NpmPackageVersionInfo {
-  pub version: String,
+  pub version: Version,
   pub dist: NpmPackageVersionDistInfo,
   pub bin: Option<NpmPackageVersionBinEntry>,
   // Bare specifier to version (ex. `"typescript": "^3.0.1") or possibly
@@ -260,7 +261,7 @@ impl NpmRegistryApi {
     nv: &NpmPackageNv,
   ) -> Result<Option<NpmPackageVersionInfo>, AnyError> {
     let package_info = self.package_info(&nv.name).await?;
-    Ok(package_info.versions.get(&nv.version.to_string()).cloned())
+    Ok(package_info.versions.get(&nv.version).cloned())
   }
 
   /// Caches all the package information in memory in parallel.
@@ -574,11 +575,12 @@ impl TestNpmRegistryApiInner {
     self.ensure_package(name);
     let mut infos = self.package_infos.lock();
     let info = infos.get_mut(name).unwrap();
-    if !info.versions.contains_key(version) {
+    let version = Version::parse_from_npm(version).unwrap();
+    if !info.versions.contains_key(&version) {
       info.versions.insert(
-        version.to_string(),
+        version.clone(),
         NpmPackageVersionInfo {
-          version: version.to_string(),
+          version,
           ..Default::default()
         },
       );
@@ -592,7 +594,11 @@ impl TestNpmRegistryApiInner {
   ) {
     let mut infos = self.package_infos.lock();
     let info = infos.get_mut(package_from.0).unwrap();
-    let version = info.versions.get_mut(package_from.1).unwrap();
+    let package_from = (
+      package_from.0,
+      Version::parse_from_npm(package_from.1).unwrap(),
+    );
+    let version = info.versions.get_mut(&package_from.1).unwrap();
     version
       .dependencies
       .insert(package_to.0.to_string(), package_to.1.to_string());
@@ -601,7 +607,9 @@ impl TestNpmRegistryApiInner {
   pub fn add_dist_tag(&self, package_name: &str, tag: &str, version: &str) {
     let mut infos = self.package_infos.lock();
     let info = infos.get_mut(package_name).unwrap();
-    info.dist_tags.insert(tag.to_string(), version.to_string());
+    info
+      .dist_tags
+      .insert(tag.to_string(), Version::parse_from_npm(version).unwrap());
   }
 
   pub fn add_peer_dependency(
@@ -609,9 +617,13 @@ impl TestNpmRegistryApiInner {
     package_from: (&str, &str),
     package_to: (&str, &str),
   ) {
+    let package_from = (
+      package_from.0,
+      Version::parse_from_npm(package_from.1).unwrap(),
+    );
     let mut infos = self.package_infos.lock();
     let info = infos.get_mut(package_from.0).unwrap();
-    let version = info.versions.get_mut(package_from.1).unwrap();
+    let version = info.versions.get_mut(&package_from.1).unwrap();
     version
       .peer_dependencies
       .insert(package_to.0.to_string(), package_to.1.to_string());
@@ -622,9 +634,13 @@ impl TestNpmRegistryApiInner {
     package_from: (&str, &str),
     package_to: (&str, &str),
   ) {
+    let package_from = (
+      package_from.0,
+      Version::parse_from_npm(package_from.1).unwrap(),
+    );
     let mut infos = self.package_infos.lock();
     let info = infos.get_mut(package_from.0).unwrap();
-    let version = info.versions.get_mut(package_from.1).unwrap();
+    let version = info.versions.get_mut(&package_from.1).unwrap();
     version
       .peer_dependencies
       .insert(package_to.0.to_string(), package_to.1.to_string());
@@ -667,6 +683,7 @@ mod test {
   use std::collections::HashMap;
 
   use deno_core::serde_json;
+  use deno_graph::semver::Version;
 
   use crate::npm::registry::NpmPackageVersionBinEntry;
   use crate::npm::NpmPackageVersionDistInfo;
@@ -680,7 +697,7 @@ mod test {
     assert_eq!(
       info,
       NpmPackageVersionInfo {
-        version: "1.0.0".to_string(),
+        version: Version::parse_from_npm("1.0.0").unwrap(),
         dist: NpmPackageVersionDistInfo {
           tarball: "value".to_string(),
           shasum: "test".to_string(),

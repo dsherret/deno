@@ -871,7 +871,7 @@ impl<'a> GraphDependencyResolver<'a> {
     package_info: &NpmPackageInfo,
     parent_id: Option<NodeId>,
   ) -> Result<(Arc<NpmPackageNv>, NodeId), AnyError> {
-    let version_and_info = resolve_best_package_version_and_info(
+    let version_info = resolve_best_package_version_and_info(
       version_req,
       package_info,
       self
@@ -884,7 +884,7 @@ impl<'a> GraphDependencyResolver<'a> {
     let resolved_id = ResolvedId {
       nv: Arc::new(NpmPackageNv {
         name: package_info.name.to_string(),
-        version: version_and_info.version.clone(),
+        version: version_info.version.clone(),
       }),
       peer_dependencies: Vec::new(),
     };
@@ -894,9 +894,7 @@ impl<'a> GraphDependencyResolver<'a> {
     let has_deps = if let Some(deps) = self.dep_entry_cache.get(&pkg_nv) {
       !deps.is_empty()
     } else {
-      let deps = self
-        .dep_entry_cache
-        .store(pkg_nv.clone(), version_and_info.info)?;
+      let deps = self.dep_entry_cache.store(pkg_nv.clone(), version_info)?;
       !deps.is_empty()
     };
 
