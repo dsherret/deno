@@ -8,12 +8,14 @@ mod lockfile;
 pub mod package_json;
 
 pub use self::import_map::resolve_import_map_from_specifier;
+use self::lockfile::snapshot_from_lockfile;
 use self::package_json::PackageJsonDeps;
 use ::import_map::ImportMap;
+use deno_core::resolve_url_or_path;
+use deno_npm::resolution::ValidSerializedNpmResolutionSnapshot;
+use deno_semver::npm::NpmPackageReqReference;
 use indexmap::IndexMap;
 
-use crate::npm::NpmRegistryApi;
-use crate::npm::NpmResolutionSnapshot;
 pub use config_file::BenchConfig;
 pub use config_file::CompilerOptions;
 pub use config_file::ConfigFile;
@@ -50,6 +52,7 @@ use deno_runtime::deno_tls::webpki_roots;
 use deno_runtime::inspector_server::InspectorServer;
 use deno_runtime::permissions::PermissionsOptions;
 use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::env;
 use std::io::BufReader;
 use std::io::Cursor;
@@ -61,6 +64,7 @@ use std::sync::Arc;
 
 use crate::cache::DenoDir;
 use crate::file_fetcher::FileFetcher;
+use crate::npm::CliNpmRegistryApi;
 use crate::npm::NpmProcessState;
 use crate::util::fs::canonicalize_path_maybe_not_exists;
 use crate::version;
@@ -116,6 +120,7 @@ pub struct BenchOptions {
   pub files: FilesConfig,
   pub filter: Option<String>,
   pub json: bool,
+  pub no_run: bool,
 }
 
 impl BenchOptions {
@@ -131,6 +136,7 @@ impl BenchOptions {
       ),
       filter: bench_flags.filter,
       json: bench_flags.json,
+      no_run: bench_flags.no_run,
     })
   }
 }
@@ -139,7 +145,6 @@ impl BenchOptions {
 pub struct FmtOptions {
   pub is_stdin: bool,
   pub check: bool,
-  pub ext: String,
   pub options: FmtOptionsConfig,
   pub files: FilesConfig,
 }
@@ -166,10 +171,6 @@ impl FmtOptions {
     Ok(Self {
       is_stdin,
       check: maybe_fmt_flags.as_ref().map(|f| f.check).unwrap_or(false),
-      ext: maybe_fmt_flags
-        .as_ref()
-        .map(|f| f.ext.to_string())
-        .unwrap_or_else(|| "ts".to_string()),
       options: resolve_fmt_options(
         maybe_fmt_flags.as_ref(),
         maybe_config_options,
@@ -675,19 +676,87 @@ impl CliOptions {
     .map(Some)
   }
 
+  pub fn resolve_main_module(&self) -> Result<ModuleSpecifier, AnyError> {
+    match &self.flags.subcommand {
+      DenoSubcommand::Bundle(bundle_flags) => {
+        resolve_url_or_path(&bundle_flags.source_file, self.initial_cwd())
+          .map_err(AnyError::from)
+      }
+      DenoSubcommand::Compile(compile_flags) => {
+        resolve_url_or_path(&compile_flags.source_file, self.initial_cwd())
+          .map_err(AnyError::from)
+      }
+      DenoSubcommand::Eval(_) => {
+        resolve_url_or_path("./$deno$eval", self.initial_cwd())
+          .map_err(AnyError::from)
+      }
+      DenoSubcommand::Repl(_) => {
+        resolve_url_or_path("./$deno$repl.ts", self.initial_cwd())
+          .map_err(AnyError::from)
+      }
+      DenoSubcommand::Run(run_flags) => {
+        if run_flags.is_stdin() {
+          std::env::current_dir()
+            .context("Unable to get CWD")
+            .and_then(|cwd| {
+              resolve_url_or_path("./$deno$stdin.ts", &cwd)
+                .map_err(AnyError::from)
+            })
+        } else if self.flags.watch.is_some() {
+          resolve_url_or_path(&run_flags.script, self.initial_cwd())
+            .map_err(AnyError::from)
+        } else if NpmPackageReqReference::from_str(&run_flags.script).is_ok() {
+          ModuleSpecifier::parse(&run_flags.script).map_err(AnyError::from)
+        } else {
+          resolve_url_or_path(&run_flags.script, self.initial_cwd())
+            .map_err(AnyError::from)
+        }
+      }
+      _ => {
+        bail!("No main module.")
+      }
+    }
+  }
+
+  pub fn resolve_file_header_overrides(
+    &self,
+  ) -> HashMap<ModuleSpecifier, HashMap<String, String>> {
+    let maybe_main_specifier = self.resolve_main_module().ok();
+    // TODO(Cre3per): This mapping moved to deno_ast with https://github.com/denoland/deno_ast/issues/133 and should be available in deno_ast >= 0.25.0 via `MediaType::from_path(...).as_media_type()`
+    let maybe_content_type =
+      self.flags.ext.as_ref().and_then(|el| match el.as_str() {
+        "ts" => Some("text/typescript"),
+        "tsx" => Some("text/tsx"),
+        "js" => Some("text/javascript"),
+        "jsx" => Some("text/jsx"),
+        _ => None,
+      });
+
+    if let (Some(main_specifier), Some(content_type)) =
+      (maybe_main_specifier, maybe_content_type)
+    {
+      HashMap::from([(
+        main_specifier,
+        HashMap::from([("content-type".to_string(), content_type.to_string())]),
+      )])
+    } else {
+      HashMap::default()
+    }
+  }
+
   pub async fn resolve_npm_resolution_snapshot(
     &self,
-    api: &NpmRegistryApi,
-  ) -> Result<Option<NpmResolutionSnapshot>, AnyError> {
+    api: &CliNpmRegistryApi,
+  ) -> Result<Option<ValidSerializedNpmResolutionSnapshot>, AnyError> {
     if let Some(state) = &*NPM_PROCESS_STATE {
       // TODO(bartlomieju): remove this clone
-      return Ok(Some(state.snapshot.clone()));
+      return Ok(Some(state.snapshot.clone().into_valid()?));
     }
 
     if let Some(lockfile) = self.maybe_lock_file() {
       if !lockfile.lock().overwrite {
         return Ok(Some(
-          NpmResolutionSnapshot::from_lockfile(lockfile.clone(), api)
+          snapshot_from_lockfile(lockfile.clone(), api)
             .await
             .with_context(|| {
               format!(
@@ -934,6 +1003,10 @@ impl CliOptions {
 
   pub fn enable_testing_features(&self) -> bool {
     self.flags.enable_testing_features
+  }
+
+  pub fn ext_flag(&self) -> &Option<String> {
+    &self.flags.ext
   }
 
   /// If the --inspect or --inspect-brk flags are used.

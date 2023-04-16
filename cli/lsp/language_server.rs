@@ -13,7 +13,6 @@ use deno_runtime::deno_node::PackageJson;
 use deno_runtime::deno_web::BlobStore;
 use import_map::ImportMap;
 use log::error;
-use log::warn;
 use serde_json::from_value;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -44,8 +43,10 @@ use super::documents::to_lsp_range;
 use super::documents::AssetOrDocument;
 use super::documents::Document;
 use super::documents::Documents;
+use super::documents::DocumentsFilter;
 use super::documents::LanguageId;
 use super::logging::lsp_log;
+use super::logging::lsp_warn;
 use super::lsp_custom;
 use super::parent_process_checker;
 use super::performance::Performance;
@@ -59,6 +60,7 @@ use super::tsc::Assets;
 use super::tsc::AssetsSnapshot;
 use super::tsc::TsServer;
 use super::urls;
+use super::urls::LspClientUrl;
 use crate::args::get_root_cert_store;
 use crate::args::package_json;
 use crate::args::resolve_import_map_from_specifier;
@@ -77,9 +79,9 @@ use crate::graph_util;
 use crate::http_util::HttpClient;
 use crate::lsp::urls::LspUrlKind;
 use crate::npm::create_npm_fs_resolver;
+use crate::npm::CliNpmRegistryApi;
 use crate::npm::NpmCache;
 use crate::npm::NpmPackageResolver;
-use crate::npm::NpmRegistryApi;
 use crate::npm::NpmResolution;
 use crate::proc_state::ProcState;
 use crate::tools::fmt::format_file;
@@ -99,7 +101,7 @@ pub struct StateSnapshot {
   pub cache_metadata: cache::CacheMetadata,
   pub documents: Documents,
   pub maybe_import_map: Option<Arc<ImportMap>>,
-  pub maybe_npm_resolver: Option<NpmPackageResolver>,
+  pub maybe_npm_resolver: Option<Arc<NpmPackageResolver>>,
 }
 
 #[derive(Debug)]
@@ -143,13 +145,13 @@ pub struct Inner {
   /// A lazily create "server" for handling test run requests.
   maybe_testing_server: Option<testing::TestServer>,
   /// Npm's registry api.
-  npm_api: NpmRegistryApi,
+  npm_api: Arc<CliNpmRegistryApi>,
   /// Npm cache
-  npm_cache: NpmCache,
+  npm_cache: Arc<NpmCache>,
   /// Npm resolution that is stored in memory.
-  npm_resolution: NpmResolution,
+  npm_resolution: Arc<NpmResolution>,
   /// Resolver for npm packages.
-  npm_resolver: NpmPackageResolver,
+  npm_resolver: Arc<NpmPackageResolver>,
   /// A collection of measurements which instrument that performance of the LSP.
   performance: Arc<Performance>,
   /// A memoized version of fixable diagnostic codes retrieved from TypeScript.
@@ -180,13 +182,15 @@ impl LanguageServer {
         .into_iter()
         .map(|d| (d.specifier().clone(), d))
         .collect::<HashMap<_, _>>();
-      let ps = ProcState::from_options(Arc::new(cli_options)).await?;
-      let mut inner_loader = ps.create_graph_loader();
+      // todo(dsherret): don't use ProcState here
+      let ps = ProcState::from_cli_options(Arc::new(cli_options)).await?;
+      let mut inner_loader = ps.module_graph_builder.create_graph_loader();
       let mut loader = crate::lsp::documents::OpenDocumentsGraphLoader {
         inner_loader: &mut inner_loader,
         open_docs: &open_docs,
       };
       let graph = ps
+        .module_graph_builder
         .create_graph_with_loader(roots.clone(), &mut loader)
         .await?;
       graph_util::graph_valid(
@@ -338,7 +342,10 @@ impl LanguageServer {
             match &ls.config.workspace_folders {
               Some(entry) => {
                 for (specifier, folder) in entry {
-                  specifiers.insert(specifier.clone(), folder.uri.clone());
+                  specifiers.insert(
+                    specifier.clone(),
+                    LspClientUrl::new(folder.uri.clone()),
+                  );
                 }
               }
               None => {
@@ -377,7 +384,7 @@ impl LanguageServer {
       let mut ls = self.0.write().await;
       if let Ok(configs) = configs_result {
         for (value, internal_uri) in
-          configs.into_iter().zip(specifiers.into_iter().map(|s| s.1))
+          configs.into_iter().zip(specifiers.into_iter().map(|s| s.0))
         {
           match value {
             Ok(specifier_settings) => {
@@ -412,10 +419,15 @@ impl LanguageServer {
 fn create_lsp_structs(
   dir: &DenoDir,
   http_client: HttpClient,
-) -> (NpmRegistryApi, NpmCache, NpmPackageResolver, NpmResolution) {
-  let registry_url = NpmRegistryApi::default_url();
+) -> (
+  Arc<CliNpmRegistryApi>,
+  Arc<NpmCache>,
+  Arc<NpmPackageResolver>,
+  Arc<NpmResolution>,
+) {
+  let registry_url = CliNpmRegistryApi::default_url();
   let progress_bar = ProgressBar::new(ProgressBarStyle::TextOnly);
-  let npm_cache = NpmCache::from_deno_dir(
+  let npm_cache = Arc::new(NpmCache::from_deno_dir(
     dir,
     // Use an "only" cache setting in order to make the
     // user do an explicit "cache" command and prevent
@@ -424,14 +436,15 @@ fn create_lsp_structs(
     CacheSetting::Only,
     http_client.clone(),
     progress_bar.clone(),
-  );
-  let api = NpmRegistryApi::new(
+  ));
+  let api = Arc::new(CliNpmRegistryApi::new(
     registry_url.clone(),
     npm_cache.clone(),
     http_client,
     progress_bar.clone(),
-  );
-  let resolution = NpmResolution::new(api.clone(), None, None);
+  ));
+  let resolution =
+    Arc::new(NpmResolution::from_serialized(api.clone(), None, None));
   let fs_resolver = create_npm_fs_resolver(
     npm_cache.clone(),
     &progress_bar,
@@ -442,7 +455,11 @@ fn create_lsp_structs(
   (
     api,
     npm_cache,
-    NpmPackageResolver::new(resolution.clone(), fs_resolver, None),
+    Arc::new(NpmPackageResolver::new(
+      resolution.clone(),
+      fs_resolver,
+      None,
+    )),
     resolution,
   )
 }
@@ -458,7 +475,7 @@ impl Inner {
       ModuleRegistry::new(&module_registries_location, http_client.clone())
         .unwrap();
     let location = dir.deps_folder_path();
-    let documents = Documents::new(&location);
+    let documents = Documents::new(&location, client.kind());
     let deps_http_cache = HttpCache::new(&location);
     let cache_metadata = cache::CacheMetadata::new(deps_http_cache.clone());
     let performance = Arc::new(Performance::default());
@@ -670,7 +687,7 @@ impl Inner {
       if let Some(ignored_options) = maybe_ignored_options {
         // TODO(@kitsonk) turn these into diagnostics that can be sent to the
         // client
-        warn!("{}", ignored_options);
+        lsp_warn!("{}", ignored_options);
       }
     }
 
@@ -685,12 +702,12 @@ impl Inner {
       maybe_import_map: self.maybe_import_map.clone(),
       maybe_npm_resolver: Some({
         // create a new snapshotted npm resolution and resolver
-        let resolution = NpmResolution::new(
+        let resolution = Arc::new(NpmResolution::new(
           self.npm_api.clone(),
-          Some(self.npm_resolution.snapshot()),
+          self.npm_resolution.snapshot(),
           None,
-        );
-        NpmPackageResolver::new(
+        ));
+        Arc::new(NpmPackageResolver::new(
           resolution.clone(),
           create_npm_fs_resolver(
             self.npm_cache.clone(),
@@ -700,7 +717,7 @@ impl Inner {
             None,
           ),
           None,
-        )
+        ))
       }),
     })
   }
@@ -1120,7 +1137,6 @@ impl Inner {
       self.client.show_message(MessageType::WARNING, err);
     }
 
-    // self.refresh_documents_config(); // todo(THIS PR): REMOVE
     self.assets.intitialize(self.snapshot()).await;
 
     self.performance.measure(mark);
@@ -1133,6 +1149,7 @@ impl Inner {
 
   fn refresh_documents_config(&mut self) {
     self.documents.update_config(
+      self.config.enabled_urls(),
       self.maybe_import_map.clone(),
       self.maybe_config_file.as_ref(),
       self.maybe_package_json.as_ref(),
@@ -1161,9 +1178,10 @@ impl Inner {
           LanguageId::Unknown
         });
     if language_id == LanguageId::Unknown {
-      warn!(
+      lsp_warn!(
         "Unsupported language id \"{}\" received for document \"{}\".",
-        params.text_document.language_id, params.text_document.uri
+        params.text_document.language_id,
+        params.text_document.uri
       );
     }
     let document = self.documents.open(
@@ -1204,8 +1222,12 @@ impl Inner {
 
   async fn refresh_npm_specifiers(&mut self) {
     let package_reqs = self.documents.npm_package_reqs();
-    if let Err(err) = self.npm_resolver.set_package_reqs(package_reqs).await {
-      warn!("Could not set npm package requirements. {:#}", err);
+    if let Err(err) = self
+      .npm_resolver
+      .set_package_reqs((*package_reqs).clone())
+      .await
+    {
+      lsp_warn!("Could not set npm package requirements. {:#}", err);
     }
   }
 
@@ -1458,7 +1480,7 @@ impl Inner {
       Ok(None) => Some(Vec::new()),
       Err(err) => {
         // TODO(lucacasonato): handle error properly
-        warn!("Format error: {:#}", err);
+        lsp_warn!("Format error: {:#}", err);
         None
       }
     };
@@ -1943,27 +1965,23 @@ impl Inner {
     let mark = self.performance.mark("references", Some(&params));
     let asset_or_doc = self.get_asset_or_document(&specifier)?;
     let line_index = asset_or_doc.line_index();
-    let req = tsc::RequestMethod::GetReferences((
-      specifier.clone(),
-      line_index.offset_tsc(params.text_document_position.position)?,
-    ));
-    let maybe_references: Option<Vec<tsc::ReferenceEntry>> = self
+    let maybe_referenced_symbols = self
       .ts_server
-      .request(self.snapshot(), req)
-      .await
-      .map_err(|err| {
-        error!("Unable to get references from TypeScript: {}", err);
-        LspError::internal_error()
-      })?;
+      .find_references(
+        self.snapshot(),
+        &specifier,
+        line_index.offset_tsc(params.text_document_position.position)?,
+      )
+      .await?;
 
-    if let Some(references) = maybe_references {
+    if let Some(symbols) = maybe_referenced_symbols {
       let mut results = Vec::new();
-      for reference in references {
+      for reference in symbols.iter().flat_map(|s| &s.references) {
         if !params.context.include_declaration && reference.is_definition {
           continue;
         }
         let reference_specifier =
-          resolve_url(&reference.document_span.file_name).unwrap();
+          resolve_url(&reference.entry.document_span.file_name).unwrap();
         let reference_line_index = if reference_specifier == specifier {
           line_index.clone()
         } else {
@@ -1971,8 +1989,11 @@ impl Inner {
             self.get_asset_or_document(&reference_specifier)?;
           asset_or_doc.line_index()
         };
-        results
-          .push(reference.to_location(reference_line_index, &self.url_map));
+        results.push(
+          reference
+            .entry
+            .to_location(reference_line_index, &self.url_map),
+        );
       }
 
       self.performance.measure(mark);
@@ -2841,7 +2862,7 @@ impl tower_lsp::LanguageServer for LanguageServer {
         .register_capability(vec![registration])
         .await
       {
-        warn!("Client errored on capabilities.\n{:#}", err);
+        lsp_warn!("Client errored on capabilities.\n{:#}", err);
       }
     }
 
@@ -2868,9 +2889,10 @@ impl tower_lsp::LanguageServer for LanguageServer {
     let (client, client_uri, specifier, had_specifier_settings) = {
       let mut inner = self.0.write().await;
       let client = inner.client.clone();
-      let client_uri = params.text_document.uri.clone();
-      let specifier =
-        inner.url_map.normalize_url(&client_uri, LspUrlKind::File);
+      let client_uri = LspClientUrl::new(params.text_document.uri.clone());
+      let specifier = inner
+        .url_map
+        .normalize_url(client_uri.as_url(), LspUrlKind::File);
       let document = inner.did_open(&specifier, params).await;
       let has_specifier_settings =
         inner.config.has_specifier_settings(&specifier);
@@ -3218,7 +3240,7 @@ impl Inner {
     )?;
     cli_options.set_import_map_specifier(self.maybe_import_map_uri.clone());
 
-    let open_docs = self.documents.documents(true, true);
+    let open_docs = self.documents.documents(DocumentsFilter::OpenDiagnosable);
     Ok(Some(PrepareCacheResult {
       cli_options,
       open_docs,
@@ -3336,7 +3358,7 @@ impl Inner {
       let mut contents = String::new();
       let mut documents_specifiers = self
         .documents
-        .documents(false, false)
+        .documents(DocumentsFilter::All)
         .into_iter()
         .map(|d| d.specifier().clone())
         .collect::<Vec<_>>();

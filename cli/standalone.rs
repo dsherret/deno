@@ -25,6 +25,7 @@ use deno_core::url::Url;
 use deno_core::v8_set_flags;
 use deno_core::ModuleLoader;
 use deno_core::ModuleSpecifier;
+use deno_core::ModuleType;
 use deno_core::ResolutionKind;
 use deno_graph::source::Resolver;
 use deno_runtime::fmt_errors::format_js_error;
@@ -165,7 +166,7 @@ impl ModuleLoader for EmbeddedModuleLoader {
   fn load(
     &self,
     module_specifier: &ModuleSpecifier,
-    _maybe_referrer: Option<ModuleSpecifier>,
+    _maybe_referrer: Option<&ModuleSpecifier>,
     _is_dynamic: bool,
   ) -> Pin<Box<deno_core::ModuleSourceFuture>> {
     let is_data_uri = get_source_from_data_url(module_specifier).ok();
@@ -173,33 +174,33 @@ impl ModuleLoader for EmbeddedModuleLoader {
       .eszip
       .get_module(module_specifier.as_str())
       .ok_or_else(|| type_error("Module not found"));
-
+    // TODO(mmastrac): This clone can probably be removed in the future if ModuleSpecifier is no longer a full-fledged URL
     let module_specifier = module_specifier.clone();
+
     async move {
       if let Some((source, _)) = is_data_uri {
-        return Ok(deno_core::ModuleSource {
-          code: source.into_bytes().into_boxed_slice(),
-          module_type: deno_core::ModuleType::JavaScript,
-          module_url_specified: module_specifier.to_string(),
-          module_url_found: module_specifier.to_string(),
-        });
+        return Ok(deno_core::ModuleSource::new(
+          deno_core::ModuleType::JavaScript,
+          source.into(),
+          &module_specifier,
+        ));
       }
 
       let module = module?;
-      let code = module.source().await;
+      let code = module.source().await.unwrap_or_default();
       let code = std::str::from_utf8(&code)
         .map_err(|_| type_error("Module source is not utf-8"))?
-        .to_owned();
+        .to_owned()
+        .into();
 
-      Ok(deno_core::ModuleSource {
-        code: code.into_bytes().into_boxed_slice(),
-        module_type: match module.kind {
-          eszip::ModuleKind::JavaScript => deno_core::ModuleType::JavaScript,
-          eszip::ModuleKind::Json => deno_core::ModuleType::Json,
+      Ok(deno_core::ModuleSource::new(
+        match module.kind {
+          eszip::ModuleKind::JavaScript => ModuleType::JavaScript,
+          eszip::ModuleKind::Json => ModuleType::Json,
         },
-        module_url_specified: module_specifier.to_string(),
-        module_url_found: module_specifier.to_string(),
-      })
+        code,
+        &module_specifier,
+      ))
     }
     .boxed_local()
   }
@@ -258,10 +259,10 @@ fn create_web_worker_callback(
         location: Some(args.main_module.clone()),
         no_color: !colors::use_color(),
         is_tty: colors::is_tty(),
-        runtime_version: version::deno(),
+        runtime_version: version::deno().to_string(),
         ts_version: version::TYPESCRIPT.to_string(),
         unstable: ps.options.unstable(),
-        user_agent: version::get_user_agent(),
+        user_agent: version::get_user_agent().to_string(),
         inspect: ps.options.is_inspecting(),
       },
       extensions: ops::cli_exts(ps.clone()),
@@ -306,7 +307,7 @@ pub async fn run(
 ) -> Result<(), AnyError> {
   let flags = metadata_to_flags(&metadata);
   let main_module = &metadata.entrypoint;
-  let ps = ProcState::build(flags).await?;
+  let ps = ProcState::from_flags(flags).await?;
   let permissions = PermissionsContainer::new(Permissions::from_options(
     &metadata.permissions,
   )?);
@@ -347,10 +348,10 @@ pub async fn run(
       location: metadata.location,
       no_color: !colors::use_color(),
       is_tty: colors::is_tty(),
-      runtime_version: version::deno(),
+      runtime_version: version::deno().to_string(),
       ts_version: version::TYPESCRIPT.to_string(),
       unstable: metadata.unstable,
-      user_agent: version::get_user_agent(),
+      user_agent: version::get_user_agent().to_string(),
       inspect: ps.options.is_inspecting(),
     },
     extensions: ops::cli_exts(ps.clone()),
@@ -384,16 +385,16 @@ pub async fn run(
     options,
   );
   worker.execute_main_module(main_module).await?;
-  worker.dispatch_load_event(&located_script_name!())?;
+  worker.dispatch_load_event(located_script_name!())?;
 
   loop {
     worker.run_event_loop(false).await?;
-    if !worker.dispatch_beforeunload_event(&located_script_name!())? {
+    if !worker.dispatch_beforeunload_event(located_script_name!())? {
       break;
     }
   }
 
-  worker.dispatch_unload_event(&located_script_name!())?;
+  worker.dispatch_unload_event(located_script_name!())?;
   std::process::exit(0);
 }
 

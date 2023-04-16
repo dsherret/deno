@@ -15,7 +15,7 @@ use crate::util::file_watcher::ResolutionResult;
 use crate::util::fs::collect_specifiers;
 use crate::util::path::is_supported_ext;
 use crate::version::get_user_agent;
-use crate::worker::create_main_worker_for_test_or_bench;
+use crate::worker::create_custom_worker;
 
 use deno_core::error::generic_error;
 use deno_core::error::AnyError;
@@ -24,11 +24,15 @@ use deno_core::futures::future;
 use deno_core::futures::stream;
 use deno_core::futures::FutureExt;
 use deno_core::futures::StreamExt;
+use deno_core::located_script_name;
+use deno_core::serde_v8;
+use deno_core::v8;
 use deno_core::ModuleSpecifier;
 use deno_runtime::permissions::Permissions;
 use deno_runtime::permissions::PermissionsContainer;
 use deno_runtime::tokio_util::run_local;
 use indexmap::IndexMap;
+use indexmap::IndexSet;
 use log::Level;
 use serde::Deserialize;
 use serde::Serialize;
@@ -87,6 +91,8 @@ pub struct BenchDescription {
   pub origin: String,
   pub baseline: bool,
   pub group: Option<String>,
+  pub ignore: bool,
+  pub only: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -416,14 +422,15 @@ async fn check_specifiers(
   specifiers: Vec<ModuleSpecifier>,
 ) -> Result<(), AnyError> {
   let lib = ps.options.ts_type_lib_window();
-  ps.prepare_module_load(
-    specifiers,
-    false,
-    lib,
-    PermissionsContainer::allow_all(),
-    PermissionsContainer::new(permissions),
-  )
-  .await?;
+  ps.module_load_preparer
+    .prepare_module_load(
+      specifiers,
+      false,
+      lib,
+      PermissionsContainer::allow_all(),
+      PermissionsContainer::new(permissions),
+    )
+    .await?;
 
   Ok(())
 }
@@ -433,20 +440,80 @@ async fn bench_specifier(
   ps: ProcState,
   permissions: Permissions,
   specifier: ModuleSpecifier,
-  channel: UnboundedSender<BenchEvent>,
-  options: BenchSpecifierOptions,
+  sender: UnboundedSender<BenchEvent>,
+  filter: TestFilter,
 ) -> Result<(), AnyError> {
-  let filter = options.filter;
-  let mut worker = create_main_worker_for_test_or_bench(
+  let mut worker = create_custom_worker(
     &ps,
-    specifier,
+    specifier.clone(),
     PermissionsContainer::new(permissions),
-    vec![ops::bench::deno_bench::init_ops(channel, filter)],
+    vec![ops::bench::deno_bench::init_ops(sender.clone())],
     Default::default(),
   )
   .await?;
 
-  worker.run_bench_specifier().await
+  // We execute the main module as a side module so that import.meta.main is not set.
+  worker.execute_side_module_possibly_with_npm().await?;
+
+  let mut worker = worker.into_main_worker();
+  worker.dispatch_load_event(located_script_name!())?;
+
+  let benchmarks = {
+    let state_rc = worker.js_runtime.op_state();
+    let mut state = state_rc.borrow_mut();
+    std::mem::take(&mut state.borrow_mut::<ops::bench::BenchContainer>().0)
+  };
+  let (only, no_only): (Vec<_>, Vec<_>) =
+    benchmarks.into_iter().partition(|(d, _)| d.only);
+  let used_only = !only.is_empty();
+  let benchmarks = if used_only { only } else { no_only };
+  let mut benchmarks = benchmarks
+    .into_iter()
+    .filter(|(d, _)| filter.includes(&d.name) && !d.ignore)
+    .collect::<Vec<_>>();
+  let mut groups = IndexSet::<Option<String>>::new();
+  // make sure ungrouped benchmarks are placed above grouped
+  groups.insert(None);
+  for (desc, _) in &benchmarks {
+    groups.insert(desc.group.clone());
+  }
+  benchmarks.sort_by(|(d1, _), (d2, _)| {
+    groups
+      .get_index_of(&d1.group)
+      .unwrap()
+      .partial_cmp(&groups.get_index_of(&d2.group).unwrap())
+      .unwrap()
+  });
+  sender.send(BenchEvent::Plan(BenchPlan {
+    origin: specifier.to_string(),
+    total: benchmarks.len(),
+    used_only,
+    names: benchmarks.iter().map(|(d, _)| d.name.clone()).collect(),
+  }))?;
+  for (desc, function) in benchmarks {
+    sender.send(BenchEvent::Wait(desc.id))?;
+    let promise = {
+      let scope = &mut worker.js_runtime.handle_scope();
+      let cb = function.open(scope);
+      let this = v8::undefined(scope).into();
+      let promise = cb.call(scope, this, &[]).unwrap();
+      v8::Global::new(scope, promise)
+    };
+    let result = worker.js_runtime.resolve_value(promise).await?;
+    let scope = &mut worker.js_runtime.handle_scope();
+    let result = v8::Local::new(scope, result);
+    let result = serde_v8::from_v8::<BenchResult>(scope, result)?;
+    sender.send(BenchEvent::Result(desc.id, result))?;
+  }
+
+  loop {
+    if !worker.dispatch_beforeunload_event(located_script_name!())? {
+      break;
+    }
+    worker.run_event_loop(false).await?;
+  }
+  worker.dispatch_unload_event(located_script_name!())?;
+  Ok(())
 }
 
 /// Test a collection of specifiers with test modes concurrently.
@@ -468,10 +535,9 @@ async fn bench_specifiers(
     let specifier = specifier;
     let sender = sender.clone();
     let options = option_for_handles.clone();
-
     tokio::task::spawn_blocking(move || {
-      let future = bench_specifier(ps, permissions, specifier, sender, options);
-
+      let future =
+        bench_specifier(ps, permissions, specifier, sender, options.filter);
       run_local(future)
     })
   });
@@ -574,7 +640,7 @@ pub async fn run_benchmarks(
   cli_options: CliOptions,
   bench_options: BenchOptions,
 ) -> Result<(), AnyError> {
-  let ps = ProcState::from_options(Arc::new(cli_options)).await?;
+  let ps = ProcState::from_cli_options(Arc::new(cli_options)).await?;
   // Various bench files should not share the same permissions in terms of
   // `PermissionsContainer` - otherwise granting/revoking permissions in one
   // file would have impact on other files, which is undesirable.
@@ -589,6 +655,10 @@ pub async fn run_benchmarks(
   }
 
   check_specifiers(&ps, permissions.clone(), specifiers.clone()).await?;
+
+  if bench_options.no_run {
+    return Ok(());
+  }
 
   bench_specifiers(
     &ps,
@@ -609,7 +679,7 @@ pub async fn run_benchmarks_with_watch(
   cli_options: CliOptions,
   bench_options: BenchOptions,
 ) -> Result<(), AnyError> {
-  let ps = ProcState::from_options(Arc::new(cli_options)).await?;
+  let ps = ProcState::from_cli_options(Arc::new(cli_options)).await?;
   // Various bench files should not share the same permissions in terms of
   // `PermissionsContainer` - otherwise granting/revoking permissions in one
   // file would have impact on other files, which is undesirable.
@@ -636,7 +706,10 @@ pub async fn run_benchmarks_with_watch(
       } else {
         bench_modules.clone()
       };
-      let graph = ps.create_graph(bench_modules.clone()).await?;
+      let graph = ps
+        .module_graph_builder
+        .create_graph(bench_modules.clone())
+        .await?;
       graph_valid_with_cli_options(&graph, &bench_modules, &ps.options)?;
 
       // TODO(@kitsonk) - This should be totally derivable from the graph.
@@ -742,6 +815,10 @@ pub async fn run_benchmarks_with_watch(
 
       check_specifiers(&ps, permissions.clone(), specifiers.clone()).await?;
 
+      if bench_options.no_run {
+        return Ok(());
+      }
+
       bench_specifiers(
         &ps,
         permissions,
@@ -769,4 +846,389 @@ pub async fn run_benchmarks_with_watch(
   .await?;
 
   Ok(())
+}
+
+mod mitata {
+  // Copyright 2022 evanwashere
+  //
+  // Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+  //
+  // The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+  //
+  // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+  use crate::colors;
+  use std::str::FromStr;
+
+  fn fmt_duration(time: f64) -> String {
+    // SAFETY: this is safe since its just reformatting numbers
+    unsafe {
+      if time < 1e0 {
+        return format!(
+          "{} ps",
+          f64::from_str(&format!("{:.2}", time * 1e3)).unwrap_unchecked()
+        );
+      }
+
+      if time < 1e3 {
+        return format!(
+          "{} ns",
+          f64::from_str(&format!("{:.2}", time)).unwrap_unchecked()
+        );
+      }
+      if time < 1e6 {
+        return format!(
+          "{} µs",
+          f64::from_str(&format!("{:.2}", time / 1e3)).unwrap_unchecked()
+        );
+      }
+      if time < 1e9 {
+        return format!(
+          "{} ms",
+          f64::from_str(&format!("{:.2}", time / 1e6)).unwrap_unchecked()
+        );
+      }
+      if time < 1e12 {
+        return format!(
+          "{} s",
+          f64::from_str(&format!("{:.2}", time / 1e9)).unwrap_unchecked()
+        );
+      }
+      if time < 36e11 {
+        return format!(
+          "{} m",
+          f64::from_str(&format!("{:.2}", time / 60e9)).unwrap_unchecked()
+        );
+      }
+
+      format!(
+        "{} h",
+        f64::from_str(&format!("{:.2}", time / 36e11)).unwrap_unchecked()
+      )
+    }
+  }
+
+  pub mod cpu {
+    #![allow(dead_code)]
+
+    pub fn name() -> String {
+      #[cfg(target_os = "linux")]
+      return linux();
+      #[cfg(target_os = "macos")]
+      return macos();
+      #[cfg(target_os = "windows")]
+      return windows();
+
+      #[allow(unreachable_code)]
+      {
+        "unknown".to_string()
+      }
+    }
+
+    pub fn macos() -> String {
+      let mut sysctl = std::process::Command::new("sysctl");
+
+      sysctl.arg("-n");
+      sysctl.arg("machdep.cpu.brand_string");
+      return std::str::from_utf8(
+        &sysctl.output().map_or(Vec::from("unknown"), |x| x.stdout),
+      )
+      .unwrap()
+      .trim()
+      .to_string();
+    }
+
+    pub fn windows() -> String {
+      let mut wmi = std::process::Command::new("wmic");
+
+      wmi.arg("cpu");
+      wmi.arg("get");
+      wmi.arg("name");
+
+      return match wmi.output() {
+        Err(_) => String::from("unknown"),
+
+        Ok(x) => {
+          let x = String::from_utf8_lossy(&x.stdout);
+          return x.lines().nth(1).unwrap_or("unknown").trim().to_string();
+        }
+      };
+    }
+
+    pub fn linux() -> String {
+      let info =
+        std::fs::read_to_string("/proc/cpuinfo").unwrap_or(String::new());
+
+      for line in info.lines() {
+        let mut iter = line.split(':');
+        let key = iter.next().unwrap_or("");
+
+        if key.contains("Hardware")
+          || key.contains("Processor")
+          || key.contains("chip type")
+          || key.contains("model name")
+          || key.starts_with("cpu type")
+          || key.starts_with("cpu model")
+        {
+          return iter.next().unwrap_or("unknown").trim().to_string();
+        }
+      }
+
+      String::from("unknown")
+    }
+  }
+
+  pub mod reporter {
+    use super::*;
+
+    #[derive(Clone, PartialEq)]
+    pub struct Error {
+      pub message: String,
+      pub stack: Option<String>,
+    }
+
+    #[derive(Clone, PartialEq)]
+    pub struct BenchmarkStats {
+      pub avg: f64,
+      pub min: f64,
+      pub max: f64,
+      pub p75: f64,
+      pub p99: f64,
+      pub p995: f64,
+    }
+
+    #[derive(Clone, PartialEq)]
+    pub struct GroupBenchmark {
+      pub name: String,
+      pub group: String,
+      pub baseline: bool,
+      pub stats: BenchmarkStats,
+    }
+
+    #[derive(Clone, PartialEq)]
+    pub struct Options {
+      size: usize,
+      pub avg: bool,
+      pub colors: bool,
+      pub min_max: bool,
+      pub percentiles: bool,
+    }
+
+    impl Options {
+      pub fn new(names: &[&str]) -> Options {
+        Options {
+          avg: true,
+          colors: true,
+          min_max: true,
+          size: size(names),
+          percentiles: true,
+        }
+      }
+    }
+
+    pub fn size(names: &[&str]) -> usize {
+      let mut max = 9;
+
+      for name in names {
+        if max < name.len() {
+          max = name.len();
+        }
+      }
+
+      2 + max
+    }
+
+    pub fn br(options: &Options) -> String {
+      let mut s = String::new();
+
+      s.push_str(&"-".repeat(
+        options.size
+          + 14 * options.avg as usize
+          + 24 * options.min_max as usize,
+      ));
+
+      if options.percentiles {
+        s.push(' ');
+        s.push_str(&"-".repeat(9 + 10 + 10));
+      }
+
+      s
+    }
+
+    pub fn benchmark_error(n: &str, e: &Error, options: &Options) -> String {
+      let size = options.size;
+      let mut s = String::new();
+
+      s.push_str(&format!("{:<size$}", n));
+      s.push_str(&format!(
+        "{}: {}",
+        &(if !options.colors {
+          "error".to_string()
+        } else {
+          colors::red("error").to_string()
+        }),
+        e.message
+      ));
+
+      if let Some(ref stack) = e.stack {
+        s.push('\n');
+
+        match options.colors {
+          false => s.push_str(stack),
+          true => s.push_str(&colors::gray(stack).to_string()),
+        }
+      }
+
+      s
+    }
+
+    pub fn header(options: &Options) -> String {
+      let size = options.size;
+      let mut s = String::new();
+
+      s.push_str(&format!("{:<size$}", "benchmark"));
+      if options.avg {
+        s.push_str(&format!("{:>14}", "time (avg)"));
+      }
+      if options.min_max {
+        s.push_str(&format!("{:>24}", "(min … max)"));
+      }
+      if options.percentiles {
+        s.push_str(&format!(" {:>9} {:>9} {:>9}", "p75", "p99", "p995"));
+      }
+
+      s
+    }
+
+    pub fn benchmark(
+      name: &str,
+      stats: &BenchmarkStats,
+      options: &Options,
+    ) -> String {
+      let size = options.size;
+      let mut s = String::new();
+
+      s.push_str(&format!("{:<size$}", name));
+
+      if !options.colors {
+        if options.avg {
+          s.push_str(&format!(
+            "{:>14}",
+            format!("{}/iter", fmt_duration(stats.avg))
+          ));
+        }
+        if options.min_max {
+          s.push_str(&format!(
+            "{:>24}",
+            format!(
+              "({} … {})",
+              fmt_duration(stats.min),
+              fmt_duration(stats.max)
+            )
+          ));
+        }
+        if options.percentiles {
+          s.push_str(&format!(
+            " {:>9} {:>9} {:>9}",
+            fmt_duration(stats.p75),
+            fmt_duration(stats.p99),
+            fmt_duration(stats.p995)
+          ));
+        }
+      } else {
+        if options.avg {
+          s.push_str(&format!(
+            "{:>23}",
+            format!("{}/iter", colors::yellow(fmt_duration(stats.avg)))
+          ));
+        }
+        if options.min_max {
+          s.push_str(&format!(
+            "{:>42}",
+            format!(
+              "({} … {})",
+              colors::cyan(fmt_duration(stats.min)),
+              colors::magenta(fmt_duration(stats.max))
+            )
+          ));
+        }
+        if options.percentiles {
+          s.push_str(&format!(
+            " {:>18} {:>18} {:>18}",
+            colors::magenta(fmt_duration(stats.p75)),
+            colors::magenta(fmt_duration(stats.p99)),
+            colors::magenta(fmt_duration(stats.p995))
+          ));
+        }
+      }
+
+      s
+    }
+
+    pub fn summary(benchmarks: &[GroupBenchmark], options: &Options) -> String {
+      let mut s = String::new();
+      let mut benchmarks = benchmarks.to_owned();
+      benchmarks.sort_by(|a, b| a.stats.avg.partial_cmp(&b.stats.avg).unwrap());
+      let baseline = benchmarks
+        .iter()
+        .find(|b| b.baseline)
+        .unwrap_or(&benchmarks[0]);
+
+      if !options.colors {
+        s.push_str(&format!("summary\n  {}", baseline.name));
+
+        for b in benchmarks.iter().filter(|b| *b != baseline) {
+          let faster = b.stats.avg >= baseline.stats.avg;
+          let diff = f64::from_str(&format!(
+            "{:.2}",
+            1.0 / baseline.stats.avg * b.stats.avg
+          ))
+          .unwrap();
+          let inv_diff = f64::from_str(&format!(
+            "{:.2}",
+            1.0 / b.stats.avg * baseline.stats.avg
+          ))
+          .unwrap();
+          s.push_str(&format!(
+            "\n   {}x times {} than {}",
+            if faster { diff } else { inv_diff },
+            if faster { "faster" } else { "slower" },
+            b.name
+          ));
+        }
+      } else {
+        s.push_str(&format!(
+          "{}\n  {}",
+          colors::bold("summary"),
+          colors::cyan_bold(&baseline.name)
+        ));
+
+        for b in benchmarks.iter().filter(|b| *b != baseline) {
+          let faster = b.stats.avg >= baseline.stats.avg;
+          let diff = f64::from_str(&format!(
+            "{:.2}",
+            1.0 / baseline.stats.avg * b.stats.avg
+          ))
+          .unwrap();
+          let inv_diff = f64::from_str(&format!(
+            "{:.2}",
+            1.0 / b.stats.avg * baseline.stats.avg
+          ))
+          .unwrap();
+          s.push_str(&format!(
+            "\n   {}x {} than {}",
+            if faster {
+              colors::green(diff.to_string()).to_string()
+            } else {
+              colors::red(inv_diff.to_string()).to_string()
+            },
+            if faster { "faster" } else { "slower" },
+            colors::cyan_bold(&b.name)
+          ));
+        }
+      }
+
+      s
+    }
+  }
 }

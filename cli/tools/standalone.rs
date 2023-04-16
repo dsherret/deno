@@ -4,7 +4,6 @@ use crate::args::CaData;
 use crate::args::CompileFlags;
 use crate::args::Flags;
 use crate::cache::DenoDir;
-use crate::graph_util::create_graph_and_maybe_check;
 use crate::graph_util::error_for_any_npm_specifier;
 use crate::http_util::HttpClient;
 use crate::standalone::Metadata;
@@ -38,9 +37,8 @@ pub async fn compile(
   flags: Flags,
   compile_flags: CompileFlags,
 ) -> Result<(), AnyError> {
-  let ps = ProcState::build(flags).await?;
-  let module_specifier =
-    resolve_url_or_path(&compile_flags.source_file, ps.options.initial_cwd())?;
+  let ps = ProcState::from_flags(flags).await?;
+  let module_specifier = ps.options.resolve_main_module()?;
   let module_roots = {
     let mut vec = Vec::with_capacity(compile_flags.include.len() + 1);
     vec.push(module_specifier.clone());
@@ -57,9 +55,12 @@ pub async fn compile(
   )
   .await?;
 
-  let graph =
-    Arc::try_unwrap(create_graph_and_maybe_check(module_roots, &ps).await?)
-      .unwrap();
+  let graph = Arc::try_unwrap(
+    ps.module_graph_builder
+      .create_graph_and_maybe_check(module_roots)
+      .await?,
+  )
+  .unwrap();
 
   // at the moment, we don't support npm specifiers in deno_compile, so show an error
   error_for_any_npm_specifier(&graph)?;
@@ -121,7 +122,7 @@ async fn get_base_binary(
   }
 
   let archive_data = tokio::fs::read(binary_path).await?;
-  let temp_dir = secure_tempfile::TempDir::new()?;
+  let temp_dir = tempfile::TempDir::new()?;
   let base_binary_path = crate::tools::upgrade::unpack_into_dir(
     archive_data,
     target.contains("windows"),

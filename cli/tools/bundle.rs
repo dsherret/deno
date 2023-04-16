@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use deno_core::error::AnyError;
 use deno_core::futures::FutureExt;
-use deno_core::resolve_url_or_path;
 use deno_graph::Module;
 use deno_runtime::colors;
 
@@ -14,7 +13,6 @@ use crate::args::CliOptions;
 use crate::args::Flags;
 use crate::args::TsConfigType;
 use crate::args::TypeCheckMode;
-use crate::graph_util::create_graph_and_maybe_check;
 use crate::graph_util::error_for_any_npm_specifier;
 use crate::proc_state::ProcState;
 use crate::util;
@@ -35,18 +33,18 @@ pub async fn bundle(
     "Use alternative bundlers like \"deno_emit\", \"esbuild\" or \"rollup\" instead."
   );
 
-  let module_specifier =
-    resolve_url_or_path(&bundle_flags.source_file, cli_options.initial_cwd())?;
+  let module_specifier = cli_options.resolve_main_module()?;
 
   let resolver = |_| {
     let cli_options = cli_options.clone();
     let module_specifier = &module_specifier;
     async move {
       log::debug!(">>>>> bundle START");
-      let ps = ProcState::from_options(cli_options).await?;
-      let graph =
-        create_graph_and_maybe_check(vec![module_specifier.clone()], &ps)
-          .await?;
+      let ps = ProcState::from_cli_options(cli_options).await?;
+      let graph = ps
+        .module_graph_builder
+        .create_graph_and_maybe_check(vec![module_specifier.clone()])
+        .await?;
 
       let mut paths_to_watch: Vec<PathBuf> = graph
         .specifiers()
