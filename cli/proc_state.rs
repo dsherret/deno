@@ -11,6 +11,7 @@ use crate::cache::EmitCache;
 use crate::cache::HttpCache;
 use crate::cache::NodeAnalysisCache;
 use crate::cache::ParsedSourceCache;
+use crate::cache::ParsedSourceCacheOptions;
 use crate::emit::Emitter;
 use crate::file_fetcher::FileFetcher;
 use crate::graph_util::ModuleGraphBuilder;
@@ -285,7 +286,13 @@ impl ProcState {
     }
     let emit_cache = EmitCache::new(dir.gen_cache.clone());
     let parsed_source_cache =
-      Arc::new(ParsedSourceCache::new(caches.dep_analysis_db(&dir)));
+      Arc::new(ParsedSourceCache::new(ParsedSourceCacheOptions {
+        db: caches.dep_analysis_db(&dir),
+        use_analysis_parser: matches!(
+          cli_options.sub_command(),
+          DenoSubcommand::Pack(_)
+        ),
+      }));
     let emit_options: deno_ast::EmitOptions = ts_config_result.ts_config.into();
     let emitter = Arc::new(Emitter::new(
       emit_cache.clone(),

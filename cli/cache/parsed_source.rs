@@ -1,6 +1,7 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use deno_ast::MediaType;
@@ -11,6 +12,7 @@ use deno_core::parking_lot::Mutex;
 use deno_core::serde_json;
 use deno_graph::CapturingModuleParser;
 use deno_graph::DefaultModuleAnalyzer;
+use deno_graph::DefaultModuleParser;
 use deno_graph::ModuleInfo;
 use deno_graph::ModuleParser;
 use deno_runtime::deno_webstorage::rusqlite::params;
@@ -71,10 +73,16 @@ impl deno_graph::ParsedSourceStore for ParsedSourceCacheSources {
   }
 }
 
+pub struct ParsedSourceCacheOptions {
+  pub db: CacheDB,
+  pub use_analysis_parser: bool,
+}
+
 /// A cache of `ParsedSource`s, which may be used with `deno_graph`
 /// for cached dependency analysis.
 pub struct ParsedSourceCache {
   db: CacheDB,
+  parser: DefaultModuleParser,
   sources: ParsedSourceCacheSources,
 }
 
@@ -83,13 +91,19 @@ impl ParsedSourceCache {
   pub fn new_in_memory() -> Self {
     Self {
       db: CacheDB::in_memory(&PARSED_SOURCE_CACHE_DB, crate::version::deno()),
+      parser: DefaultModuleParser::new(),
       sources: Default::default(),
     }
   }
 
-  pub fn new(db: CacheDB) -> Self {
+  pub fn new(options: ParsedSourceCacheOptions) -> Self {
     Self {
-      db,
+      db: options.db,
+      parser: if options.use_analysis_parser {
+        DefaultModuleParser::new_for_analysis()
+      } else {
+        DefaultModuleParser::new()
+      },
       sources: Default::default(),
     }
   }
@@ -128,29 +142,27 @@ impl ParsedSourceCache {
   }
 
   pub fn as_analyzer(&self) -> Box<dyn deno_graph::ModuleAnalyzer> {
-    Box::new(ParsedSourceCacheModuleAnalyzer::new(
-      self.db.clone(),
-      self.sources.clone(),
-    ))
+    Box::new(ParsedSourceCacheModuleAnalyzer {
+      conn: self.db.clone(),
+      sources: self.sources.clone(),
+      parser: self.parser.clone(),
+    })
   }
 
   /// Creates a parser that will reuse a ParsedSource from the store
   /// if it exists, or else parse.
   pub fn as_capturing_parser(&self) -> CapturingModuleParser {
-    CapturingModuleParser::new(None, &self.sources)
+    CapturingModuleParser::new(Some(&self.parser), &self.sources)
   }
 }
 
 struct ParsedSourceCacheModuleAnalyzer {
   conn: CacheDB,
   sources: ParsedSourceCacheSources,
+  parser: DefaultModuleParser,
 }
 
 impl ParsedSourceCacheModuleAnalyzer {
-  pub fn new(conn: CacheDB, sources: ParsedSourceCacheSources) -> Self {
-    Self { conn, sources }
-  }
-
   pub fn get_module_info(
     &self,
     specifier: &ModuleSpecifier,
@@ -245,7 +257,7 @@ impl deno_graph::ModuleAnalyzer for ParsedSourceCacheModuleAnalyzer {
     }
 
     // otherwise, get the module info from the parsed source cache
-    let parser = CapturingModuleParser::new(None, &self.sources);
+    let parser = CapturingModuleParser::new(Some(&self.parser), &self.sources);
     let analyzer = DefaultModuleAnalyzer::new(&parser);
 
     let module_info = analyzer.analyze(specifier, source, media_type)?;
@@ -337,7 +349,11 @@ mod test {
 
     // try recreating with the same version
     let conn = cache.conn.recreate_with_version("1.0.0");
-    let cache = ParsedSourceCacheModuleAnalyzer::new(conn, Default::default());
+    let cache = ParsedSourceCacheModuleAnalyzer {
+      conn,
+      sources: Default::default(),
+      parser: Default::default(),
+    };
 
     // should get it
     assert_eq!(
@@ -349,7 +365,11 @@ mod test {
 
     // try recreating with a different version
     let conn = cache.conn.recreate_with_version("1.0.1");
-    let cache = ParsedSourceCacheModuleAnalyzer::new(conn, Default::default());
+    let cache = ParsedSourceCacheModuleAnalyzer {
+      conn,
+      sources: Default::default(),
+      parser: Default::default(),
+    };
 
     // should no longer exist
     assert_eq!(

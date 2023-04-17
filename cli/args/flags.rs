@@ -1560,18 +1560,18 @@ Ignore linting a file by adding an ignore comment at the top of the file:
     .arg(no_clear_screen_arg())
 }
 
-fn pack_subcommand<'a>() -> Command<'a> {
+fn pack_subcommand() -> Command {
   compile_args(Command::new("pack"))
+    .hide(true)
+    .arg(check_arg(true))
     .arg(
       Arg::new("source_file")
-        .takes_value(true)
         .required(true)
         .value_hint(ValueHint::FilePath),
     )
     .arg(
       Arg::new("out_file")
-        .takes_value(true)
-        .required(false)
+        .value_parser(value_parser!(PathBuf))
         .value_hint(ValueHint::FilePath),
     )
     .arg(watch_arg(false))
@@ -1587,6 +1587,7 @@ If no output file is given, the output is written to standard output:
   deno pack https://deno.land/std/examples/colors.ts",
     )
 }
+
 fn repl_subcommand() -> Command {
   runtime_args(Command::new("repl"), true, true)
     .about("Read Eval Print Loop")
@@ -2266,7 +2267,7 @@ fn check_arg(checks_local_by_default: bool) -> Arg {
 default, so adding --check is redundant.
 If the value of '--check=all' is supplied, diagnostic errors from remote modules
 will be included.
-  
+
 Alternatively, the 'deno check' subcommand can be used.",
     )
   } else {
@@ -2746,19 +2747,20 @@ fn lint_parse(flags: &mut Flags, matches: &mut ArgMatches) {
   });
 }
 
-fn pack_parse(flags: &mut Flags, matches: &clap::ArgMatches) {
+fn pack_parse(flags: &mut Flags, matches: &mut ArgMatches) {
   flags.type_check_mode = TypeCheckMode::Local;
 
   compile_args_parse(flags, matches);
 
-  let source_file = matches.value_of("source_file").unwrap().to_string();
+  let source_file = matches.remove_one::<String>("source_file").unwrap();
 
-  let out_file = if let Some(out_file) = matches.value_of("out_file") {
-    flags.allow_write = Some(vec![]);
-    Some(PathBuf::from(out_file))
-  } else {
-    None
-  };
+  let out_file =
+    if let Some(out_file) = matches.remove_one::<PathBuf>("out_file") {
+      flags.allow_write = Some(vec![]);
+      Some(out_file)
+    } else {
+      None
+    };
 
   watch_arg_parse(flags, matches, false);
 
