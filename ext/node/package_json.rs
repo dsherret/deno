@@ -63,15 +63,17 @@ impl PackageJson {
   }
 
   pub fn load<Fs: NodeFs>(
+    fs: &Fs,
     resolver: &dyn RequireNpmResolver,
     permissions: &mut dyn NodePermissions,
     path: PathBuf,
   ) -> Result<PackageJson, AnyError> {
     resolver.ensure_read_permission(permissions, &path)?;
-    Self::load_skip_read_permission::<Fs>(path)
+    Self::load_skip_read_permission(fs, path)
   }
 
   pub fn load_skip_read_permission<Fs: NodeFs>(
+    fs: &Fs,
     path: PathBuf,
   ) -> Result<PackageJson, AnyError> {
     assert!(path.is_absolute());
@@ -80,7 +82,7 @@ impl PackageJson {
       return Ok(CACHE.with(|cache| cache.borrow()[&path].clone()));
     }
 
-    let source = match Fs::read_to_string(&path) {
+    let source = match fs.read_to_string(&path) {
       Ok(source) => source,
       Err(err) if err.kind() == ErrorKind::NotFound => {
         return Ok(PackageJson::empty(path));

@@ -30,13 +30,7 @@ pub use polyfill::find_builtin_node_module;
 pub use polyfill::is_builtin_node_module;
 pub use polyfill::NodeModulePolyfill;
 pub use polyfill::SUPPORTED_BUILTIN_NODE_MODULES;
-pub use resolution::get_closest_package_json;
-pub use resolution::get_package_scope_config;
-pub use resolution::legacy_main_resolve;
-pub use resolution::package_exports_resolve;
-pub use resolution::package_imports_resolve;
-pub use resolution::package_resolve;
-pub use resolution::path_to_declaration_path;
+pub use resolution::NodeExtResolver;
 pub use resolution::NodeModuleKind;
 pub use resolution::NodeResolutionMode;
 pub use resolution::DEFAULT_CONDITIONS;
@@ -56,24 +50,26 @@ pub struct NodeFsMetadata {
   pub is_dir: bool,
 }
 
-pub trait NodeFs {
-  fn current_dir() -> io::Result<PathBuf>;
-  fn metadata<P: AsRef<Path>>(path: P) -> io::Result<NodeFsMetadata>;
-  fn is_file<P: AsRef<Path>>(path: P) -> bool;
-  fn is_dir<P: AsRef<Path>>(path: P) -> bool;
-  fn exists<P: AsRef<Path>>(path: P) -> bool;
-  fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String>;
-  fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf>;
+pub trait NodeFs: Clone {
+  fn current_dir(&self) -> io::Result<PathBuf>;
+  fn metadata<P: AsRef<Path>>(&self, path: P) -> io::Result<NodeFsMetadata>;
+  fn is_file<P: AsRef<Path>>(&self, path: P) -> bool;
+  fn is_dir<P: AsRef<Path>>(&self, path: P) -> bool;
+  fn exists<P: AsRef<Path>>(&self, path: P) -> bool;
+  fn read_to_string<P: AsRef<Path>>(&self, path: P) -> io::Result<String>;
+  fn canonicalize<P: AsRef<Path>>(&self, path: P) -> io::Result<PathBuf>;
 }
 
+#[derive(Clone)]
 pub struct RealFs;
+
 impl NodeFs for RealFs {
-  fn current_dir() -> io::Result<PathBuf> {
+  fn current_dir(&self) -> io::Result<PathBuf> {
     #[allow(clippy::disallowed_methods)]
     std::env::current_dir()
   }
 
-  fn metadata<P: AsRef<Path>>(path: P) -> io::Result<NodeFsMetadata> {
+  fn metadata<P: AsRef<Path>>(&self, path: P) -> io::Result<NodeFsMetadata> {
     #[allow(clippy::disallowed_methods)]
     std::fs::metadata(path).map(|metadata| {
       // on most systems, calling is_file() and is_dir() is cheap
@@ -85,29 +81,29 @@ impl NodeFs for RealFs {
     })
   }
 
-  fn exists<P: AsRef<Path>>(path: P) -> bool {
+  fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
     #[allow(clippy::disallowed_methods)]
     std::fs::metadata(path).is_ok()
   }
 
-  fn is_file<P: AsRef<Path>>(path: P) -> bool {
+  fn is_file<P: AsRef<Path>>(&self, path: P) -> bool {
     #[allow(clippy::disallowed_methods)]
     std::fs::metadata(path)
       .map(|m| m.is_file())
       .unwrap_or(false)
   }
 
-  fn is_dir<P: AsRef<Path>>(path: P) -> bool {
+  fn is_dir<P: AsRef<Path>>(&self, path: P) -> bool {
     #[allow(clippy::disallowed_methods)]
     std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
   }
 
-  fn read_to_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
+  fn read_to_string<P: AsRef<Path>>(&self, path: P) -> io::Result<String> {
     #[allow(clippy::disallowed_methods)]
     std::fs::read_to_string(path)
   }
 
-  fn canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+  fn canonicalize<P: AsRef<Path>>(&self, path: P) -> io::Result<PathBuf> {
     #[allow(clippy::disallowed_methods)]
     std::path::Path::canonicalize(path.as_ref())
   }
@@ -490,11 +486,15 @@ deno_core::extension!(deno_node,
   ],
   options = {
     maybe_npm_resolver: Option<Rc<dyn RequireNpmResolver>>,
+    node_ext_resolver: NodeExtResolver<Env::Fs>,
+    fs: Env::Fs,
   },
   state = |state, options| {
     if let Some(npm_resolver) = options.maybe_npm_resolver {
       state.put(npm_resolver);
     }
+    state.put(options.node_ext_resolver);
+    state.put(options.fs);
   },
 );
 
