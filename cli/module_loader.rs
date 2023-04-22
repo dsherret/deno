@@ -11,10 +11,8 @@ use crate::graph_util::graph_valid_with_cli_options;
 use crate::graph_util::ModuleGraphBuilder;
 use crate::graph_util::ModuleGraphContainer;
 use crate::node;
-use crate::node::NodeCodeTranslator;
-use crate::node::NodeResolution;
-use crate::npm::NpmPackageResolver;
-use crate::npm::NpmResolution;
+use crate::node::CliNodeCodeTranslator;
+use crate::node::CliNodeResolver;
 use crate::proc_state::CjsResolutionStore;
 use crate::proc_state::FileWatcherReporter;
 use crate::proc_state::ProcState;
@@ -50,7 +48,10 @@ use deno_graph::JsonModule;
 use deno_graph::Module;
 use deno_graph::Resolution;
 use deno_lockfile::Lockfile;
+use deno_runtime::deno_node;
+use deno_runtime::deno_node::NodeResolution;
 use deno_runtime::deno_node::NodeResolutionMode;
+use deno_runtime::deno_node::RealFs;
 use deno_runtime::permissions::PermissionsContainer;
 use deno_semver::npm::NpmPackageReqReference;
 use std::borrow::Cow;
@@ -242,9 +243,8 @@ pub struct CliModuleLoader {
   emitter: Arc<Emitter>,
   graph_container: Arc<ModuleGraphContainer>,
   module_load_preparer: Arc<ModuleLoadPreparer>,
-  node_code_translator: Arc<NodeCodeTranslator>,
-  npm_resolution: Arc<NpmResolution>,
-  npm_resolver: Arc<NpmPackageResolver>,
+  node_code_translator: Arc<CliNodeCodeTranslator>,
+  node_resolver: Arc<CliNodeResolver>,
   parsed_source_cache: Arc<ParsedSourceCache>,
   resolver: Arc<CliGraphResolver>,
 }
@@ -265,8 +265,7 @@ impl CliModuleLoader {
       graph_container: ps.graph_container.clone(),
       module_load_preparer: ps.module_load_preparer.clone(),
       node_code_translator: ps.node_code_translator.clone(),
-      npm_resolution: ps.npm_resolution.clone(),
-      npm_resolver: ps.npm_resolver.clone(),
+      node_resolver: ps.node_resolver.clone(),
       parsed_source_cache: ps.parsed_source_cache.clone(),
       resolver: ps.resolver.clone(),
     })
@@ -287,8 +286,7 @@ impl CliModuleLoader {
       graph_container: ps.graph_container.clone(),
       module_load_preparer: ps.module_load_preparer.clone(),
       node_code_translator: ps.node_code_translator.clone(),
-      npm_resolution: ps.npm_resolution.clone(),
-      npm_resolver: ps.npm_resolver.clone(),
+      node_resolver: ps.node_resolver.clone(),
       parsed_source_cache: ps.parsed_source_cache.clone(),
       resolver: ps.resolver.clone(),
     })
@@ -370,7 +368,7 @@ impl CliModuleLoader {
     maybe_referrer: Option<&ModuleSpecifier>,
     is_dynamic: bool,
   ) -> Result<ModuleSource, AnyError> {
-    let code_source = if self.npm_resolver.in_npm_package(specifier) {
+    let code_source = if self.node_resolver.in_npm_package(specifier) {
       let file_path = specifier.to_file_path().unwrap();
       let code = std::fs::read_to_string(&file_path).with_context(|| {
         let mut msg = "Unable to load ".to_string();
@@ -389,17 +387,16 @@ impl CliModuleLoader {
           self.root_permissions.clone()
         };
         // translate cjs to esm if it's cjs and inject node globals
-        self.node_code_translator.translate_cjs_to_esm(
+        self.node_code_translator.translate_cjs_to_esm::<RealFs>(
           specifier,
-          code,
-          MediaType::Cjs,
+          &code,
           &mut permissions,
         )?
       } else {
         // only inject node globals for esm
         self
           .node_code_translator
-          .esm_code_with_node_globals(specifier, code)?
+          .esm_code_with_node_globals(specifier, &code)?
       };
       ModuleCodeSource {
         code: code.into(),
@@ -431,7 +428,7 @@ impl CliModuleLoader {
 
   fn handle_node_resolve_result(
     &self,
-    result: Result<Option<node::NodeResolution>, AnyError>,
+    result: Result<Option<NodeResolution>, AnyError>,
   ) -> Result<ModuleSpecifier, AnyError> {
     let response = match result? {
       Some(response) => response,
@@ -441,7 +438,7 @@ impl CliModuleLoader {
       // remember that this was a common js resolution
       self.cjs_resolutions.insert(specifier.clone());
     } else if let NodeResolution::BuiltIn(specifier) = &response {
-      return node::resolve_builtin_node_module(specifier);
+      return deno_node::resolve_builtin_node_module(specifier);
     }
     Ok(response.into_url())
   }
@@ -466,14 +463,13 @@ impl ModuleLoader for CliModuleLoader {
     let referrer_result = deno_core::resolve_url_or_path(referrer, &cwd);
 
     if let Ok(referrer) = referrer_result.as_ref() {
-      if self.npm_resolver.in_npm_package(referrer) {
+      if self.node_resolver.in_npm_package(referrer) {
         // we're in an npm package, so use node resolution
         return self
-          .handle_node_resolve_result(node::node_resolve(
+          .handle_node_resolve_result(self.node_resolver.resolve::<RealFs>(
             specifier,
             referrer,
             NodeResolutionMode::Execution,
-            &self.npm_resolver.as_require_npm_resolver(),
             &mut permissions,
           ))
           .with_context(|| {
@@ -495,17 +491,18 @@ impl ModuleLoader for CliModuleLoader {
 
           return match graph.get(specifier) {
             Some(Module::Npm(module)) => self
-              .handle_node_resolve_result(node::node_resolve_npm_reference(
-                &module.nv_reference,
-                NodeResolutionMode::Execution,
-                &self.npm_resolver,
-                &mut permissions,
-              ))
+              .handle_node_resolve_result(
+                self.node_resolver.resolve_npm_reference::<RealFs>(
+                  &module.nv_reference,
+                  NodeResolutionMode::Execution,
+                  &mut permissions,
+                ),
+              )
               .with_context(|| {
                 format!("Could not resolve '{}'.", module.nv_reference)
               }),
             Some(Module::Node(module)) => {
-              node::resolve_builtin_node_module(&module.module_name)
+              deno_node::resolve_builtin_node_module(&module.module_name)
             }
             Some(Module::Esm(module)) => Ok(module.specifier.clone()),
             Some(Module::Json(module)) => Ok(module.specifier.clone()),
@@ -527,7 +524,7 @@ impl ModuleLoader for CliModuleLoader {
 
     // Built-in Node modules
     if let Some(module_name) = specifier.strip_prefix("node:") {
-      return node::resolve_builtin_node_module(module_name);
+      return deno_node::resolve_builtin_node_module(module_name);
     }
 
     // FIXME(bartlomieju): this is a hacky way to provide compatibility with REPL
@@ -555,15 +552,14 @@ impl ModuleLoader for CliModuleLoader {
         if let Ok(reference) =
           NpmPackageReqReference::from_specifier(&specifier)
         {
-          let reference =
-            self.npm_resolution.pkg_req_ref_to_nv_ref(reference)?;
           return self
-            .handle_node_resolve_result(node::node_resolve_npm_reference(
-              &reference,
-              deno_runtime::deno_node::NodeResolutionMode::Execution,
-              &self.npm_resolver,
-              &mut permissions,
-            ))
+            .handle_node_resolve_result(
+              self.node_resolver.resolve_npm_req_reference::<RealFs>(
+                &reference,
+                NodeResolutionMode::Execution,
+                &mut permissions,
+              ),
+            )
             .with_context(|| format!("Could not resolve '{reference}'."));
         }
       }
@@ -595,7 +591,7 @@ impl ModuleLoader for CliModuleLoader {
     _maybe_referrer: Option<String>,
     is_dynamic: bool,
   ) -> Pin<Box<dyn Future<Output = Result<(), AnyError>>>> {
-    if self.npm_resolver.in_npm_package(specifier) {
+    if self.node_resolver.in_npm_package(specifier) {
       // nothing to prepare
       return Box::pin(deno_core::futures::future::ready(Ok(())));
     }
