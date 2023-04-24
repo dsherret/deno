@@ -1,4 +1,6 @@
 // Copyright 2018-2023 the Deno authors. All rights reserved. MIT license.
+
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -79,21 +81,17 @@ pub async fn pack(flags: Flags, pack_flags: PackFlags) -> Result<(), AnyError> {
   let operation = |(ps, graph): (ProcState, Arc<deno_graph::ModuleGraph>)| {
     let out_file = &pack_flags.out_file;
     async move {
-      let pack_output = pack_module_graph(graph.as_ref(), &ps)?;
+      let pack_output =
+        pack_module_graph(graph.as_ref(), &ps, pack_flags.lib).await?;
       log::debug!(">>>>> pack END");
 
       if let Some(out_file) = out_file {
-        let output_bytes = pack_output.as_bytes();
-        let output_len = output_bytes.len();
-        util::fs::write_file(out_file, output_bytes, 0o644)?;
-        log::info!(
-          "{} {:?} ({})",
-          colors::green("Emit"),
-          out_file,
-          colors::gray(display::human_size(output_len as f64))
-        );
+        output_to_file(out_file, &pack_output.js)?;
+        if let Some(dts) = &pack_output.dts {
+          output_to_file(&out_file.with_extension("d.ts"), dts)?;
+        }
       } else {
-        println!("{}", pack_output);
+        println!("{}", pack_output.js);
       }
 
       Ok(())
@@ -123,11 +121,62 @@ pub async fn pack(flags: Flags, pack_flags: PackFlags) -> Result<(), AnyError> {
   Ok(())
 }
 
-fn pack_module_graph(
+fn output_to_file(out_file: &Path, text: &str) -> Result<(), AnyError> {
+  let output_bytes = text.as_bytes();
+  let output_len = output_bytes.len();
+  util::fs::write_file(out_file, output_bytes, 0o644)?;
+  log::info!(
+    "{} {} ({})",
+    colors::green("Emit"),
+    out_file.display(),
+    colors::gray(display::human_size(output_len as f64))
+  );
+  Ok(())
+}
+
+struct PackResult {
+  js: String,
+  dts: Option<String>,
+}
+
+async fn pack_module_graph(
   graph: &deno_graph::ModuleGraph,
   ps: &ProcState,
-) -> Result<String, AnyError> {
+  lib: bool,
+) -> Result<PackResult, AnyError> {
   log::info!("{} {}", colors::green("Pack"), graph.roots[0]);
 
-  deno_emit::pack(graph, &ps.parsed_source_cache.as_capturing_parser())
+  if lib {
+    let dts_result = tokio::task::spawn_blocking({
+      let ps = ps.clone();
+      let graph = graph.clone(); // todo: don't clone
+      move || {
+        deno_emit::pack_dts(
+          &graph,
+          &ps.parsed_source_cache.as_capturing_parser(),
+        )
+      }
+    });
+    let js = deno_emit::pack(
+      graph,
+      &ps.parsed_source_cache.as_capturing_parser(),
+      deno_emit::PackOptions {
+        include_remote: !lib,
+      },
+    )?;
+    let dts = dts_result.await.unwrap()?;
+    Ok(PackResult { dts: Some(dts), js })
+  } else {
+    let js_source = deno_emit::pack(
+      graph,
+      &ps.parsed_source_cache.as_capturing_parser(),
+      deno_emit::PackOptions {
+        include_remote: !lib,
+      },
+    )?;
+    Ok(PackResult {
+      js: js_source,
+      dts: None,
+    })
+  }
 }

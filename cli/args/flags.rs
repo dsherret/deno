@@ -156,6 +156,7 @@ pub struct LintFlags {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackFlags {
   pub source_file: String,
+  pub lib: bool,
   pub out_file: Option<PathBuf>,
 }
 
@@ -1574,6 +1575,12 @@ fn pack_subcommand() -> Command {
         .value_parser(value_parser!(PathBuf))
         .value_hint(ValueHint::FilePath),
     )
+    .arg(
+      Arg::new("lib")
+        .long("lib")
+        .action(ArgAction::SetTrue)
+        .requires("out_file"),
+    )
     .arg(watch_arg(false))
     .arg(no_clear_screen_arg())
     .about("UNSTABLE: Concatenate module and dependencies")
@@ -2767,6 +2774,7 @@ fn pack_parse(flags: &mut Flags, matches: &mut ArgMatches) {
   flags.subcommand = DenoSubcommand::Pack(PackFlags {
     source_file,
     out_file,
+    lib: matches.contains_id("lib"),
   });
 }
 
