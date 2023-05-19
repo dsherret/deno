@@ -28,11 +28,12 @@ static NODE_GLOBALS: &[&str] = &[
   "clearTimeout",
   "console",
   "global",
+  "performance",
   "process",
+  "queueMicrotask",
   "setImmediate",
   "setInterval",
   "setTimeout",
-  "performance",
 ];
 
 #[derive(Debug, Clone)]

@@ -1286,6 +1286,7 @@ delete Object.prototype.__proto__;
     "setTimeout",
     "setInterval",
     "setImmediate",
+    "queueMicrotask",
     "Global",
     "AbortController",
     "AbortSignal",
