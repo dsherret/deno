@@ -528,8 +528,8 @@ impl FileFetcher {
   }
 
   /// Get the location of the current HTTP cache associated with the fetcher.
-  pub fn get_http_cache_location(&self) -> PathBuf {
-    self.http_cache.location.clone()
+  pub fn get_http_cache_location(&self) -> &PathBuf {
+    self.http_cache.global_cache_dir_path()
   }
 
   /// A synchronous way to retrieve a source file, where if the file has already
@@ -688,7 +688,7 @@ mod tests {
     let location = temp_dir.path().join("deps").to_path_buf();
     let blob_store: Arc<BlobStore> = Default::default();
     let file_fetcher = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       cache_setting,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1000,7 +1000,7 @@ mod tests {
   fn test_get_http_cache_location() {
     let (file_fetcher, temp_dir) = setup(CacheSetting::Use, None);
     let expected = temp_dir.path().join("deps").to_path_buf();
-    let actual = file_fetcher.get_http_cache_location();
+    let actual = file_fetcher.get_http_cache_location().to_path_buf();
     assert_eq!(actual, expected);
   }
 
@@ -1122,7 +1122,7 @@ mod tests {
     // invocation and indicates to "cache bust".
     let location = temp_dir.path().join("deps").to_path_buf();
     let file_fetcher = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       CacheSetting::ReloadAll,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1147,7 +1147,7 @@ mod tests {
     let temp_dir = TempDir::new();
     let location = temp_dir.path().join("deps").to_path_buf();
     let file_fetcher_01 = FileFetcher::new(
-      HttpCache::new(location.clone()),
+      HttpCache::new_global(location.clone()),
       CacheSetting::Use,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1172,7 +1172,7 @@ mod tests {
     let metadata_file_modified_01 = metadata_file_metadata.modified().unwrap();
 
     let file_fetcher_02 = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       CacheSetting::Use,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1313,7 +1313,7 @@ mod tests {
     let temp_dir = TempDir::new();
     let location = temp_dir.path().join("deps").to_path_buf();
     let file_fetcher_01 = FileFetcher::new(
-      HttpCache::new(location.clone()),
+      HttpCache::new_global(location.clone()),
       CacheSetting::Use,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1341,7 +1341,7 @@ mod tests {
     let metadata_file_modified_01 = metadata_file_metadata.modified().unwrap();
 
     let file_fetcher_02 = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       CacheSetting::Use,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1440,7 +1440,7 @@ mod tests {
     let temp_dir = TempDir::new();
     let location = temp_dir.path().join("deps").to_path_buf();
     let file_fetcher = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       CacheSetting::Use,
       false,
       Arc::new(HttpClient::new(None, None)),
@@ -1465,7 +1465,7 @@ mod tests {
     let temp_dir = TempDir::new();
     let location = temp_dir.path().join("deps").to_path_buf();
     let file_fetcher_01 = FileFetcher::new(
-      HttpCache::new(location.clone()),
+      HttpCache::new_global(location.clone()),
       CacheSetting::Only,
       true,
       Arc::new(HttpClient::new(None, None)),
@@ -1473,7 +1473,7 @@ mod tests {
       None,
     );
     let file_fetcher_02 = FileFetcher::new(
-      HttpCache::new(location),
+      HttpCache::new_global(location),
       CacheSetting::Use,
       true,
       Arc::new(HttpClient::new(None, None)),

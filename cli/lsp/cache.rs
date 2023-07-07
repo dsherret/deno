@@ -2,13 +2,13 @@
 
 use crate::cache::CachedUrlMetadata;
 use crate::cache::HttpCache;
+use crate::cache::HttpCachePaths;
 
 use deno_core::parking_lot::Mutex;
 use deno_core::ModuleSpecifier;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -49,7 +49,7 @@ struct Metadata {
   version: Option<String>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct CacheMetadata {
   cache: HttpCache,
   metadata: Arc<Mutex<HashMap<ModuleSpecifier, Metadata>>>,
@@ -104,8 +104,8 @@ impl CacheMetadata {
     Some(metadata)
   }
 
-  pub fn set_location(&mut self, location: PathBuf) {
-    self.cache = HttpCache::new(location);
+  pub fn set_http_cache_paths(&mut self, cache_paths: HttpCachePaths) {
+    self.cache = HttpCache::new(cache_paths);
     self.metadata.lock().clear();
   }
 }

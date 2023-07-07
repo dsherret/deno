@@ -88,6 +88,7 @@ use crate::args::TsConfig;
 use crate::cache::DenoDir;
 use crate::cache::FastInsecureHasher;
 use crate::cache::HttpCache;
+use crate::cache::HttpCachePaths;
 use crate::factory::CliFactory;
 use crate::file_fetcher::FileFetcher;
 use crate::graph_util;
@@ -184,7 +185,7 @@ struct LspConfigFileInfo {
 pub struct LanguageServer(Arc<tokio::sync::RwLock<Inner>>);
 
 /// Snapshot of the state used by TSC.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StateSnapshot {
   pub assets: AssetsSnapshot,
   pub cache_metadata: cache::CacheMetadata,
@@ -610,11 +611,12 @@ impl Inner {
       http_client.clone(),
     );
     let location = dir.deps_folder_path();
-    let documents = Documents::new(location.clone());
-    let deps_http_cache = HttpCache::new(location);
+    let deps_http_cache = HttpCache::new_global(location);
+    let documents = Documents::new(deps_http_cache.clone());
     let cache_metadata = cache::CacheMetadata::new(deps_http_cache.clone());
     let performance = Arc::new(Performance::default());
-    let ts_server = Arc::new(TsServer::new(performance.clone()));
+    let ts_server =
+      Arc::new(TsServer::new(performance.clone(), deps_http_cache.clone()));
     let config = Config::new();
     let diagnostics_server = DiagnosticsServer::new(
       client.clone(),
@@ -951,9 +953,14 @@ impl Inner {
     );
     self.module_registries_location = module_registries_location;
     // update the cache path
-    let location = dir.deps_folder_path();
-    self.documents.set_location(location.clone());
-    self.cache_metadata.set_location(location);
+    let options = HttpCachePaths {
+      global_cache: dir.deps_folder_path(),
+      local_module_cache: self
+        .maybe_config_file()
+        .and_then(|c| c.remote_modules_dir()),
+    };
+    self.documents.set_http_cache_paths(options.clone());
+    self.cache_metadata.set_http_cache_paths(options);
     self.maybe_cache_path = new_cache_path;
     Ok(())
   }
@@ -3077,6 +3084,25 @@ impl tower_lsp::LanguageServer for LanguageServer {
 
     let (client, client_uri, specifier, had_specifier_settings) = {
       let mut inner = self.0.write().await;
+      if let Some(vendor_dir) = inner
+        .maybe_config_file()
+        .and_then(|c| c.remote_modules_dir())
+      {
+        if params.text_document.uri.scheme() == "file" {
+          if let Ok(local_path) = params.text_document.uri.to_file_path() {
+            if local_path.starts_with(vendor_dir) {
+              let client = inner.client.clone();
+              let client_uri =
+                LspClientUrl::new(params.text_document.uri.clone());
+              let specifier = inner
+                .url_map
+                .normalize_url(client_uri.as_url(), LspUrlKind::File);
+              eprintln!("SPECIFIER: {}", specifier);
+              return;
+            }
+          }
+        }
+      }
       let client = inner.client.clone();
       let client_uri = LspClientUrl::new(params.text_document.uri.clone());
       let specifier = inner

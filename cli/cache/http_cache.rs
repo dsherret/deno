@@ -14,6 +14,7 @@ use deno_core::url::Url;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -102,18 +103,38 @@ impl CachedUrlMetadata {
   }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+pub struct HttpCachePaths {
+  pub global_cache: PathBuf,
+  pub local_module_cache: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
 pub struct HttpCache {
-  pub location: PathBuf,
+  paths: HttpCachePaths,
 }
 
 impl HttpCache {
   /// Returns a new instance.
   ///
   /// `location` must be an absolute path.
-  pub fn new(location: PathBuf) -> Self {
-    assert!(location.is_absolute());
-    Self { location }
+  pub fn new(paths: HttpCachePaths) -> Self {
+    assert!(paths.global_cache.is_absolute());
+    if let Some(module_cache) = &paths.local_module_cache {
+      assert!(module_cache.is_absolute());
+    }
+    Self { paths }
+  }
+
+  pub fn new_global(global_cache_path: PathBuf) -> Self {
+    Self::new(HttpCachePaths {
+      global_cache: global_cache_path,
+      local_module_cache: None,
+    })
+  }
+
+  pub fn global_cache_dir_path(&self) -> &PathBuf {
+    &self.paths.global_cache
   }
 
   /// Ensures the location of the cache.
@@ -132,7 +153,16 @@ impl HttpCache {
   }
 
   pub fn get_cache_filename(&self, url: &Url) -> Option<PathBuf> {
-    Some(self.location.join(url_to_filename(url)?))
+    let module_cache = self
+      .paths
+      .local_module_cache
+      .as_ref()
+      .unwrap_or(&self.paths.global_cache);
+    Some(module_cache.join(url_to_filename(url)?))
+  }
+
+  pub fn get_global_cache_filename(&self, url: &Url) -> Option<PathBuf> {
+    Some(self.paths.global_cache.join(url_to_filename(url)?))
   }
 
   // TODO(bartlomieju): this method should check headers file
@@ -142,12 +172,35 @@ impl HttpCache {
     &self,
     url: &Url,
   ) -> Result<(File, HeadersMap, SystemTime), AnyError> {
-    let cache_filename = self.location.join(
-      url_to_filename(url)
-        .ok_or_else(|| generic_error("Can't convert url to filename."))?,
-    );
-    let metadata_filename = CachedUrlMetadata::filename(&cache_filename);
-    let file = File::open(cache_filename)?;
+    let cache_filename = url_to_filename(url)
+      .ok_or_else(|| generic_error("Can't convert url to filename."))?;
+    let cache_pathname = self.paths.global_cache.join(&cache_filename);
+    let metadata_filename = CachedUrlMetadata::filename(&cache_pathname);
+    let file = if let Some(local_module_cache) = &self.paths.local_module_cache
+    {
+      // attempt to read the module cache filanem
+      let local_cache_pathname = local_module_cache.join(&cache_filename);
+      match File::open(&local_cache_pathname) {
+        Ok(file) => file,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+          self.ensure_dir_exists(local_cache_pathname.parent().unwrap())?;
+          // attempt to copy the path from the global cache to the local cache
+          let content = std::fs::read_to_string(cache_pathname)?;
+          util::fs::atomic_write_file(
+            &local_cache_pathname,
+            content,
+            CACHE_PERM,
+          )?;
+          File::open(local_cache_pathname)?
+        }
+        Err(err) => {
+          return Err(err.into());
+        }
+      }
+    } else {
+      File::open(cache_pathname)?
+    };
+
     let metadata = fs::read_to_string(metadata_filename)?;
     let metadata: CachedUrlMetadata = serde_json::from_str(&metadata)?;
     Ok((file, metadata.headers, metadata.now))
@@ -159,24 +212,31 @@ impl HttpCache {
     headers_map: HeadersMap,
     content: &[u8],
   ) -> Result<(), AnyError> {
-    let cache_filename = self.location.join(
-      url_to_filename(url)
-        .ok_or_else(|| generic_error("Can't convert url to filename."))?,
-    );
+    let cache_filename = url_to_filename(url)
+      .ok_or_else(|| generic_error("Can't convert url to filename."))?;
+    let cache_pathname = self.paths.global_cache.join(&cache_filename);
     // Create parent directory
-    let parent_filename = cache_filename
+    let parent_filename = cache_pathname
       .parent()
       .expect("Cache filename should have a parent dir");
     self.ensure_dir_exists(parent_filename)?;
     // Cache content
-    util::fs::atomic_write_file(&cache_filename, content, CACHE_PERM)?;
+    util::fs::atomic_write_file(&cache_pathname, content, CACHE_PERM)?;
 
     let metadata = CachedUrlMetadata {
       now: SystemTime::now(),
       url: url.to_string(),
       headers: headers_map,
     };
-    metadata.write(&cache_filename)
+    metadata.write(&cache_pathname)?;
+
+    if let Some(local_module_cache) = &self.paths.local_module_cache {
+      self.ensure_dir_exists(local_module_cache)?;
+      let cache_pathname = local_module_cache.join(&cache_filename);
+      util::fs::atomic_write_file(&cache_pathname, content, CACHE_PERM)?;
+    }
+
+    Ok(())
   }
 }
 
@@ -200,8 +260,8 @@ mod tests {
     // doesn't make sense to return error in such specific scenarios.
     // For more details check issue:
     // https://github.com/denoland/deno/issues/5688
-    let cache = HttpCache::new(cache_path.to_path_buf());
-    assert!(!cache.location.exists());
+    let cache = HttpCache::new_global(cache_path.to_path_buf());
+    assert!(!cache.paths.global_cache.exists());
     cache
       .set(
         &Url::parse("http://example.com/foo/bar.js").unwrap(),
@@ -209,14 +269,14 @@ mod tests {
         b"hello world",
       )
       .expect("Failed to add to cache");
-    assert!(cache.ensure_dir_exists(&cache.location).is_ok());
+    assert!(cache.ensure_dir_exists(&cache.paths.global_cache).is_ok());
     assert!(cache_path.is_dir());
   }
 
   #[test]
   fn test_get_set() {
     let dir = TempDir::new();
-    let cache = HttpCache::new(dir.path().to_path_buf());
+    let cache = HttpCache::new_global(dir.path().to_path_buf());
     let url = Url::parse("https://deno.land/x/welcome.ts").unwrap();
     let mut headers = HashMap::new();
     headers.insert(
