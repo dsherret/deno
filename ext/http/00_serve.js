@@ -726,7 +726,9 @@ function serveHttpOn(context, callback) {
       }
     },
     [SymbolAsyncDispose]() {
-      return this.shutdown();
+      return this.shutdown().catch((_err) => {
+        // observe and ignore
+      });
     },
   };
 }

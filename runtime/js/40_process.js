@@ -327,7 +327,11 @@ class ChildProcess {
     } catch {
       // ignore errors from killing the process (such as ESRCH or BadResource)
     }
-    await this.#status;
+    try {
+      await this.#status;
+    } catch {
+      // dispose should not throw
+    }
   }
 
   ref() {
