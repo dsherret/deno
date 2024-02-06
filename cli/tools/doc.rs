@@ -4,7 +4,6 @@ use crate::args::DocFlags;
 use crate::args::DocHtmlFlag;
 use crate::args::DocSourceFileFlag;
 use crate::args::Flags;
-use crate::cache::LazyGraphSourceParser;
 use crate::colors;
 use crate::diagnostics::Diagnostic;
 use crate::diagnostics::DiagnosticLevel;
@@ -12,10 +11,8 @@ use crate::diagnostics::DiagnosticLocation;
 use crate::diagnostics::DiagnosticSnippet;
 use crate::diagnostics::DiagnosticSnippetHighlight;
 use crate::diagnostics::DiagnosticSnippetHighlightStyle;
-use crate::diagnostics::DiagnosticSnippetSource;
 use crate::diagnostics::DiagnosticSourcePos;
 use crate::diagnostics::DiagnosticSourceRange;
-use crate::diagnostics::SourceTextParsedSourceStore;
 use crate::display::write_json_to_stdout;
 use crate::display::write_to_stdout_ignore_sigpipe;
 use crate::factory::CliFactory;
@@ -143,10 +140,7 @@ pub async fn doc(flags: Flags, doc_flags: DocFlags) -> Result<(), AnyError> {
 
       if doc_flags.lint {
         let diagnostics = doc_parser.take_diagnostics();
-        check_diagnostics(
-          LazyGraphSourceParser::new(parsed_source_cache, &graph),
-          &diagnostics,
-        )?;
+        check_diagnostics(&diagnostics)?;
       }
 
       doc_nodes_by_url
@@ -346,13 +340,14 @@ impl Diagnostic for DocDiagnostic {
     DiagnosticLocation::ModulePosition {
       specifier: Cow::Owned(specifier),
       source_pos: DiagnosticSourcePos::ByteIndex(self.location.byte_index),
+      text_info: self.text_info.clone(),
     }
   }
 
   fn snippet(&self) -> Option<DiagnosticSnippet<'_>> {
     let specifier = Url::parse(&self.location.filename).unwrap();
     Some(DiagnosticSnippet {
-      source: DiagnosticSnippetSource::Specifier(Cow::Owned(specifier)),
+      source: Cow::Borrowed(&self.text_info),
       highlight: DiagnosticSnippetHighlight {
         style: DiagnosticSnippetHighlightStyle::Error,
         range: DiagnosticSourceRange {
@@ -379,7 +374,7 @@ impl Diagnostic for DocDiagnostic {
       } => {
         let specifier = Url::parse(&reference_location.filename).unwrap();
         Some(DiagnosticSnippet {
-          source: DiagnosticSnippetSource::Specifier(Cow::Owned(specifier)),
+          source: Cow::Borrowed(&self.text_info),
           highlight: DiagnosticSnippetHighlight {
             style: DiagnosticSnippetHighlightStyle::Hint,
             range: DiagnosticSourceRange {
@@ -416,10 +411,7 @@ impl Diagnostic for DocDiagnostic {
   }
 }
 
-fn check_diagnostics(
-  source_parser: LazyGraphSourceParser,
-  diagnostics: &[DocDiagnostic],
-) -> Result<(), AnyError> {
+fn check_diagnostics(diagnostics: &[DocDiagnostic]) -> Result<(), AnyError> {
   if diagnostics.is_empty() {
     return Ok(());
   }
@@ -441,8 +433,7 @@ fn check_diagnostics(
     for (_, diagnostics_by_col) in diagnostics_by_lc {
       for (_, diagnostics) in diagnostics_by_col {
         for diagnostic in diagnostics {
-          let sources = SourceTextParsedSourceStore(source_parser);
-          log::error!("{}", diagnostic.display(&sources));
+          log::error!("{}", diagnostic.display());
         }
       }
     }

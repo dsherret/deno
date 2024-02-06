@@ -16,25 +16,6 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::cache::LazyGraphSourceParser;
 
-pub trait SourceTextStore {
-  fn get_source_text<'a>(
-    &'a self,
-    specifier: &ModuleSpecifier,
-  ) -> Option<Cow<'a, SourceTextInfo>>;
-}
-
-pub struct SourceTextParsedSourceStore<'a>(pub LazyGraphSourceParser<'a>);
-
-impl SourceTextStore for SourceTextParsedSourceStore<'_> {
-  fn get_source_text<'a>(
-    &'a self,
-    specifier: &ModuleSpecifier,
-  ) -> Option<Cow<'a, SourceTextInfo>> {
-    let parsed_source = self.0.get_or_parse_source(specifier).ok()??;
-    Some(Cow::Owned(parsed_source.text_info().clone()))
-  }
-}
-
 pub enum DiagnosticLevel {
   Error,
   Warning,
@@ -89,6 +70,7 @@ pub enum DiagnosticLocation<'a> {
     specifier: Cow<'a, ModuleSpecifier>,
     /// The source position of the diagnostic.
     source_pos: DiagnosticSourcePos,
+    text_info: SourceTextInfo,
   },
 }
 
@@ -101,21 +83,21 @@ impl<'a> DiagnosticLocation<'a> {
   /// from the start of the line to the diagnostic.
   /// Why UTF-16 code units? Because that's what VS Code understands, and
   /// everyone uses VS Code. :)
-  fn position(&self, sources: &dyn SourceTextStore) -> Option<(usize, usize)> {
+  fn position(&self) -> Option<(usize, usize)> {
     match self {
       DiagnosticLocation::Path { .. } => None,
       DiagnosticLocation::Module { .. } => None,
       DiagnosticLocation::ModulePosition {
         specifier,
         source_pos,
+        text_info,
       } => {
-        let source = sources.get_source_text(specifier).expect(
-          "source text should be in the cache if the location is in a file",
-        );
-        let pos = source_pos.pos(&source);
-        let line_index = source.line_index(pos);
-        let line_start_pos = source.line_start(line_index);
-        let content = source.range_text(&SourceRange::new(line_start_pos, pos));
+        let pos = source_pos.pos(&text_info);
+        let line_index = text_info.line_index(pos);
+        let line_start_pos = text_info.line_start(line_index);
+        // todo(dsherret): fix in text_lines
+        let content =
+          text_info.range_text(&SourceRange::new(line_start_pos, pos));
         let line = line_index + 1;
         let column = content.encode_utf16().count() + 1;
         Some((line, column))
@@ -126,7 +108,7 @@ impl<'a> DiagnosticLocation<'a> {
 
 pub struct DiagnosticSnippet<'a> {
   /// The source text for this snippet. The
-  pub source: DiagnosticSnippetSource<'a>,
+  pub source: Cow<'a, deno_ast::SourceTextInfo>,
   /// The piece of the snippet that should be highlighted.
   pub highlight: DiagnosticSnippetHighlight<'a>,
 }
@@ -175,34 +157,6 @@ impl DiagnosticSnippetHighlightStyle {
       DiagnosticSnippetHighlightStyle::Warning => '^',
       DiagnosticSnippetHighlightStyle::Addition => '+',
       DiagnosticSnippetHighlightStyle::Hint => '-',
-    }
-  }
-}
-
-pub enum DiagnosticSnippetSource<'a> {
-  /// The specifier of the module that should be displayed in this snippet. The
-  /// contents of the file will be retrieved from the `SourceTextStore`.
-  Specifier(Cow<'a, ModuleSpecifier>),
-  #[allow(dead_code)]
-  /// The source text that should be displayed in this snippet.
-  ///
-  /// This should be used if the text of the snippet is not available in the
-  /// `SourceTextStore`.
-  SourceTextInfo(Cow<'a, deno_ast::SourceTextInfo>),
-}
-
-impl<'a> DiagnosticSnippetSource<'a> {
-  fn to_source_text_info(
-    &self,
-    sources: &'a dyn SourceTextStore,
-  ) -> Cow<'a, SourceTextInfo> {
-    match self {
-      DiagnosticSnippetSource::Specifier(specifier) => {
-        sources.get_source_text(specifier).expect(
-          "source text should be in the cache if snippet source is a specifier",
-        )
-      }
-      DiagnosticSnippetSource::SourceTextInfo(info) => info.clone(),
     }
   }
 }
@@ -285,14 +239,8 @@ pub trait Diagnostic {
   /// An optional URL to the documentation for the diagnostic.
   fn docs_url(&self) -> Option<impl fmt::Display + '_>;
 
-  fn display<'a>(
-    &'a self,
-    sources: &'a dyn SourceTextStore,
-  ) -> DiagnosticDisplay<'a, Self> {
-    DiagnosticDisplay {
-      diagnostic: self,
-      sources,
-    }
+  fn display<'a>(&'a self) -> DiagnosticDisplay<'a, Self> {
+    DiagnosticDisplay { diagnostic: self }
   }
 }
 
@@ -353,12 +301,11 @@ fn display_width(str: &str) -> usize {
 
 pub struct DiagnosticDisplay<'a, T: Diagnostic + ?Sized> {
   diagnostic: &'a T,
-  sources: &'a dyn SourceTextStore,
 }
 
 impl<T: Diagnostic + ?Sized> Display for DiagnosticDisplay<'_, T> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    print_diagnostic(f, self.sources, self.diagnostic)
+    print_diagnostic(f, self.diagnostic)
   }
 }
 
@@ -376,7 +323,6 @@ impl<T: Diagnostic + ?Sized> Display for DiagnosticDisplay<'_, T> {
 //   docs: https://jsr.io/d/missing-return-type
 fn print_diagnostic(
   io: &mut dyn std::fmt::Write,
-  sources: &dyn SourceTextStore,
   diagnostic: &(impl Diagnostic + ?Sized),
 ) -> Result<(), std::fmt::Error> {
   match diagnostic.level() {
@@ -400,13 +346,11 @@ fn print_diagnostic(
 
   let mut max_line_number_digits = 1;
   if let Some(snippet) = diagnostic.snippet() {
-    let source = snippet.source.to_source_text_info(sources);
-    let last_line = line_number(&source, snippet.highlight.range.end);
+    let last_line = line_number(&snippet.source, snippet.highlight.range.end);
     max_line_number_digits = max_line_number_digits.max(last_line.ilog10() + 1);
   }
   if let Some(snippet) = diagnostic.snippet_fixed() {
-    let source = snippet.source.to_source_text_info(sources);
-    let last_line = line_number(&source, snippet.highlight.range.end);
+    let last_line = line_number(&snippet.source, snippet.highlight.range.end);
     max_line_number_digits = max_line_number_digits.max(last_line.ilog10() + 1);
   }
 
@@ -430,7 +374,7 @@ fn print_diagnostic(
       }
     }
   }
-  if let Some((line, column)) = location.position(sources) {
+  if let Some((line, column)) = location.position() {
     write!(
       io,
       "{}",
@@ -440,7 +384,7 @@ fn print_diagnostic(
   writeln!(io)?;
 
   if let Some(snippet) = diagnostic.snippet() {
-    print_snippet(io, sources, &snippet, max_line_number_digits)?;
+    print_snippet(io, &snippet, max_line_number_digits)?;
   };
 
   if let Some(hint) = diagnostic.hint() {
@@ -454,7 +398,7 @@ fn print_diagnostic(
   }
 
   if let Some(snippet) = diagnostic.snippet_fixed() {
-    print_snippet(io, sources, &snippet, max_line_number_digits)?;
+    print_snippet(io, &snippet, max_line_number_digits)?;
   }
 
   writeln!(io)?;
@@ -479,7 +423,6 @@ fn print_diagnostic(
 /// Prints a snippet to the given writer and returns the line number indent.
 fn print_snippet(
   io: &mut dyn std::fmt::Write,
-  sources: &dyn SourceTextStore,
   snippet: &DiagnosticSnippet<'_>,
   max_line_number_digits: u32,
 ) -> Result<(), std::fmt::Error> {
@@ -497,10 +440,8 @@ fn print_snippet(
     Ok(())
   }
 
-  let source = source.to_source_text_info(sources);
-
-  let start_line_number = line_number(&source, highlight.range.start);
-  let end_line_number = line_number(&source, highlight.range.end);
+  let start_line_number = line_number(&snippet.source, highlight.range.start);
+  let end_line_number = line_number(&snippet.source, highlight.range.end);
 
   print_padded(io, colors::intense_blue(" | "), max_line_number_digits)?;
   writeln!(io)?;
@@ -588,8 +529,6 @@ mod tests {
 
   use deno_ast::ModuleSpecifier;
   use deno_ast::SourceTextInfo;
-
-  use super::SourceTextStore;
 
   struct TestSource {
     specifier: ModuleSpecifier,

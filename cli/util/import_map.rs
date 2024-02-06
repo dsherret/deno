@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use deno_ast::ParsedSource;
 use deno_ast::SourceRange;
+use deno_ast::SourceTextInfo;
 use deno_core::serde_json;
 use deno_core::ModuleSpecifier;
 use deno_graph::DefaultModuleAnalyzer;
@@ -73,6 +74,7 @@ pub enum ImportMapUnfurlDiagnostic {
   UnanalyzableDynamicImport {
     specifier: ModuleSpecifier,
     range: SourceRange,
+    text_info: SourceTextInfo,
   },
 }
 
@@ -150,6 +152,7 @@ impl<'a> ImportMapUnfurler<'a> {
               ImportMapUnfurlDiagnostic::UnanalyzableDynamicImport {
                 specifier: url.to_owned(),
                 range: SourceRange::new(start_pos, end_pos),
+                text_info: parsed_source.text_info().clone(),
               },
             );
           }
