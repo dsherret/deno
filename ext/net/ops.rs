@@ -5,6 +5,7 @@ use crate::raw::NetworkListenerResource;
 use crate::resolve_addr::resolve_addr;
 use crate::resolve_addr::resolve_addr_sync;
 use crate::tcp::TcpListener;
+use crate::NetPermissionHost;
 use crate::NetPermissions;
 use deno_core::error::bad_resource;
 use deno_core::error::custom_error;
@@ -140,11 +141,10 @@ where
   NP: NetPermissions + 'static,
 {
   {
+    let host = NetPermissionHost::from_str(&addr.hostname, Some(addr.port))?;
     let mut s = state.borrow_mut();
-    s.borrow_mut::<NP>().check_net(
-      &(&addr.hostname, Some(addr.port)),
-      "Deno.DatagramConn.send()",
-    )?;
+    s.borrow_mut::<NP>()
+      .check_net(&host, "Deno.DatagramConn.send()")?;
   }
   let addr = resolve_addr(&addr.hostname, addr.port)
     .await?
@@ -310,10 +310,11 @@ where
   NP: NetPermissions + 'static,
 {
   {
+    let host = NetPermissionHost::from_str(&addr.hostname, Some(addr.port))?;
     let mut state_ = state.borrow_mut();
     state_
       .borrow_mut::<NP>()
-      .check_net(&(&addr.hostname, Some(addr.port)), "Deno.connect()")?;
+      .check_net(&host, "Deno.connect()")?;
   }
 
   let addr = resolve_addr(&addr.hostname, addr.port)
@@ -360,9 +361,8 @@ where
   if reuse_port {
     super::check_unstable(state, "Deno.listen({ reusePort: true })");
   }
-  state
-    .borrow_mut::<NP>()
-    .check_net(&(&addr.hostname, Some(addr.port)), "Deno.listen()")?;
+  let host = NetPermissionHost::from_str(&addr.hostname, Some(addr.port))?;
+  state.borrow_mut::<NP>().check_net(&host, "Deno.listen()")?;
   let addr = resolve_addr_sync(&addr.hostname, addr.port)?
     .next()
     .ok_or_else(|| generic_error("No resolved address found"))?;
@@ -384,9 +384,10 @@ fn net_listen_udp<NP>(
 where
   NP: NetPermissions + 'static,
 {
+  let host = NetPermissionHost::from_str(&addr.hostname, Some(addr.port))?;
   state
     .borrow_mut::<NP>()
-    .check_net(&(&addr.hostname, Some(addr.port)), "Deno.listenDatagram()")?;
+    .check_net(&host, "Deno.listenDatagram()")?;
   let addr = resolve_addr_sync(&addr.hostname, addr.port)?
     .next()
     .ok_or_else(|| generic_error("No resolved address found"))?;
@@ -583,7 +584,8 @@ where
       let socker_addr = &ns.socket_addr;
       let ip = socker_addr.ip().to_string();
       let port = socker_addr.port();
-      perm.check_net(&(ip, Some(port)), "Deno.resolveDns()")?;
+      let host = NetPermissionHost::from_str(&ip, Some(port))?;
+      perm.check_net(&host, "Deno.resolveDns()")?;
     }
   }
 

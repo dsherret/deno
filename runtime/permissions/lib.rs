@@ -16,7 +16,6 @@ use deno_core::url;
 use deno_core::url::Url;
 use deno_core::ModuleSpecifier;
 use deno_terminal::colors;
-use fqdn::fqdn;
 use fqdn::FQDN;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
@@ -692,8 +691,10 @@ impl Descriptor for WriteDescriptor {
 pub struct NetDescriptor(pub FQDN, pub Option<u16>);
 
 impl NetDescriptor {
-  fn new<T: AsRef<str>>(host: &&(T, Option<u16>)) -> Self {
-    NetDescriptor(fqdn!(host.0.as_ref()), host.1)
+  pub fn from_url(url: &Url) -> Result<Self, AnyError> {
+    let hostname = url.host_str().ok_or_else(|| uri_error("Missing host"))?;
+    let fqdn = FQDN::from_str(hostname)?;
+    Ok(NetDescriptor(fqdn, url.port()))
   }
 }
 
@@ -733,13 +734,12 @@ impl FromStr for NetDescriptor {
     // Set the scheme to `unknown` to parse the URL, as we really don't know
     // what the scheme is. We only using Url::parse to parse the host and port
     // and don't care about the scheme.
-    let url = url::Url::parse(&format!("unknown://{s}"))?;
-    let hostname = url
-      .host_str()
-      .ok_or(url::ParseError::EmptyHost)?
-      .to_string();
-
-    Ok(NetDescriptor(fqdn!(&hostname), url.port()))
+    let url = url::Url::parse(&format!("unknown://{s}"))
+      .map_err(|_| uri_error("Invalid host"))?;
+    if url.path() != "/" {
+      return Err(uri_error("Invalid host"));
+    }
+    NetDescriptor::from_url(&url)
   }
 }
 
@@ -1103,37 +1103,25 @@ impl UnaryPermission<WriteDescriptor> {
 }
 
 impl UnaryPermission<NetDescriptor> {
-  pub fn query<T: AsRef<str>>(
-    &self,
-    host: Option<&(T, Option<u16>)>,
-  ) -> PermissionState {
-    self.query_desc(
-      host.map(|h| NetDescriptor::new(&h)).as_ref(),
-      AllowPartial::TreatAsPartialGranted,
-    )
+  pub fn query(&self, host: Option<&NetDescriptor>) -> PermissionState {
+    self.query_desc(host, AllowPartial::TreatAsPartialGranted)
   }
 
-  pub fn request<T: AsRef<str>>(
-    &mut self,
-    host: Option<&(T, Option<u16>)>,
-  ) -> PermissionState {
-    self.request_desc(host.map(|h| NetDescriptor::new(&h)).as_ref(), || None)
+  pub fn request(&mut self, host: Option<&NetDescriptor>) -> PermissionState {
+    self.request_desc(host, || None)
   }
 
-  pub fn revoke<T: AsRef<str>>(
-    &mut self,
-    host: Option<&(T, Option<u16>)>,
-  ) -> PermissionState {
-    self.revoke_desc(host.map(|h| NetDescriptor::new(&h)).as_ref())
+  pub fn revoke(&mut self, host: Option<&NetDescriptor>) -> PermissionState {
+    self.revoke_desc(host)
   }
 
-  pub fn check<T: AsRef<str>>(
+  pub fn check(
     &mut self,
-    host: &(T, Option<u16>),
+    host: &NetDescriptor,
     api_name: Option<&str>,
   ) -> Result<(), AnyError> {
     skip_check_if_is_permission_fully_granted!(self);
-    self.check_desc(Some(&NetDescriptor::new(&host)), false, api_name, || None)
+    self.check_desc(Some(host), false, api_name, || None)
   }
 
   pub fn check_url(
@@ -1142,17 +1130,13 @@ impl UnaryPermission<NetDescriptor> {
     api_name: Option<&str>,
   ) -> Result<(), AnyError> {
     skip_check_if_is_permission_fully_granted!(self);
-    let hostname = url
-      .host_str()
-      .ok_or_else(|| uri_error("Missing host"))?
-      .to_string();
-    let host = &(&hostname, url.port_or_known_default());
-    let display_host = match url.port() {
-      None => hostname.clone(),
-      Some(port) => format!("{hostname}:{port}"),
-    };
-    self.check_desc(Some(&NetDescriptor::new(&host)), false, api_name, || {
-      Some(format!("\"{}\"", display_host))
+    let descriptor = NetDescriptor::from_url(url)?;
+    self.check_desc(Some(&descriptor), false, api_name, || {
+      let hostname = url.host_str().unwrap();
+      Some(match url.port() {
+        None => format!("\"{}\"", hostname),
+        Some(port) => format!("\"{}:{}\"", hostname, port),
+      })
     })
   }
 
@@ -1734,9 +1718,9 @@ impl PermissionsContainer {
   }
 
   #[inline(always)]
-  pub fn check_net<T: AsRef<str>>(
+  pub fn check_net(
     &mut self,
-    host: &(T, Option<u16>),
+    host: &NetDescriptor,
     api_name: &str,
   ) -> Result<(), AnyError> {
     self.0.lock().net.check(host, Some(api_name))
@@ -2320,9 +2304,11 @@ mod tests {
     ];
 
     for (host, port, is_ok) in domain_tests {
+      let descriptor =
+        NetDescriptor::from_str(&format!("{}:{}", host, port)).unwrap();
       assert_eq!(
         is_ok,
-        perms.net.check(&(host, Some(port)), None).is_ok(),
+        perms.net.check(&descriptor, None).is_ok(),
         "{}:{}",
         host,
         port,

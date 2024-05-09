@@ -9,20 +9,41 @@ pub mod raw;
 pub mod resolve_addr;
 mod tcp;
 
+use deno_core::error::uri_error;
 use deno_core::error::AnyError;
+use deno_core::url::Url;
 use deno_core::OpState;
 use deno_tls::rustls::RootCertStore;
 use deno_tls::RootCertStoreProvider;
+use fqdn::FQDN;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 pub const UNSTABLE_FEATURE_NAME: &str = "net";
 
+pub struct NetPermissionHost {
+  pub fqdn: FQDN,
+  pub port: Option<u16>,
+}
+
+impl NetPermissionHost {
+  pub fn from_url(url: &Url) -> Result<Self, AnyError> {
+    let hostname = url.host_str().ok_or_else(|| uri_error("Missing host"))?;
+    Self::from_str(hostname, url.port())
+  }
+
+  pub fn from_str(host: &str, port: Option<u16>) -> Result<Self, AnyError> {
+    let fqdn = FQDN::from_str(host)?;
+    Ok(NetPermissionHost { fqdn, port })
+  }
+}
+
 pub trait NetPermissions {
-  fn check_net<T: AsRef<str>>(
+  fn check_net(
     &mut self,
-    _host: &(T, Option<u16>),
+    _host: &NetPermissionHost,
     _api_name: &str,
   ) -> Result<(), AnyError>;
   fn check_read(&mut self, _p: &Path, _api_name: &str) -> Result<(), AnyError>;
