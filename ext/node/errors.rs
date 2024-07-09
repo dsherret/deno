@@ -65,6 +65,37 @@ pub struct InvalidModuleSpecifierError {
   pub maybe_referrer: Option<String>,
 }
 
+#[derive(Debug, Clone, Error)]
+#[error(
+  "Cannot find package '{}'{}",
+  package_json_path.display(),
+  maybe_referrer.as_ref().map(|referrer| format!(" imported from '{}'", referrer)).unwrap_or_default()
+)]
+pub struct PackageNotFoundError {
+  pub package_json_path: PathBuf,
+  pub maybe_referrer: Option<ModuleSpecifier>,
+}
+
+kinded_err!(LegacyIndexResolveError, LegacyIndexResolveErrorKind);
+
+#[derive(Debug, Error)]
+pub enum LegacyIndexResolveErrorKind {
+  #[error(transparent)]
+  PackageNotFoundError(#[from] PackageNotFoundError),
+  #[error(transparent)]
+  UrlToNodeResolution(#[from] UrlToNodeResolutionError),
+}
+
+kinded_err!(LegacyExactResolveError, LegacyExactResolveErrorKind);
+
+#[derive(Debug, Error)]
+pub enum LegacyExactResolveErrorKind {
+  #[error(transparent)]
+  PathToDeclarationUrl(#[from] PathToDeclarationUrlError),
+  #[error(transparent)]
+  UrlToNodeResolution(#[from] UrlToNodeResolutionError),
+}
+
 #[derive(Debug, Error)]
 pub enum LegacyMainResolveError {
   #[error(transparent)]
@@ -121,7 +152,7 @@ pub enum PackageSubpathResolveErrorKind {
   #[error(transparent)]
   LegacyMain(LegacyMainResolveError),
   #[error(transparent)]
-  LegacyExact(PathToDeclarationUrlError),
+  LegacyExact(LegacyExactResolveError),
 }
 
 #[derive(Debug, Error)]
@@ -182,6 +213,8 @@ pub enum PackageExportsResolveErrorKind {
 pub enum PathToDeclarationUrlError {
   #[error(transparent)]
   SubPath(#[from] PackageSubpathResolveError),
+  #[error(transparent)]
+  UrlToNodeResolution(#[from] UrlToNodeResolutionError),
 }
 
 kinded_err!(ClosestPkgJsonError, ClosestPkgJsonErrorKind);

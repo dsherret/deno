@@ -21,6 +21,8 @@ use crate::errors::ClosestPkgJsonErrorKind;
 use crate::errors::FinalizeResolutionError;
 use crate::errors::InvalidModuleSpecifierError;
 use crate::errors::InvalidPackageTargetError;
+use crate::errors::LegacyExactResolveError;
+use crate::errors::LegacyIndexResolveError;
 use crate::errors::LegacyMainResolveError;
 use crate::errors::ModuleNotFoundError;
 use crate::errors::NodeCjsResolveError;
@@ -30,6 +32,7 @@ use crate::errors::PackageExportsResolveError;
 use crate::errors::PackageImportNotDefinedError;
 use crate::errors::PackageImportsResolveError;
 use crate::errors::PackageImportsResolveErrorKind;
+use crate::errors::PackageNotFoundError;
 use crate::errors::PackagePathNotExportedError;
 use crate::errors::PackageResolveError;
 use crate::errors::PackageSubpathResolveError;
@@ -176,23 +179,23 @@ impl NodeResolver {
     referrer: &ModuleSpecifier,
     referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
-  ) -> Result<Option<NodeResolution>, NodeResolveError> {
+  ) -> Result<NodeResolution, NodeResolveError> {
     // Note: if we are here, then the referrer is an esm module
     // TODO(bartlomieju): skipped "policy" part as we don't plan to support it
 
     if crate::is_builtin_node_module(specifier) {
-      return Ok(Some(NodeResolution::BuiltIn(specifier.to_string())));
+      return Ok(NodeResolution::BuiltIn(specifier.to_string()));
     }
 
     if let Ok(url) = Url::parse(specifier) {
       if url.scheme() == "data" {
-        return Ok(Some(NodeResolution::Esm(url)));
+        return Ok(NodeResolution::Esm(url));
       }
 
       if let Some(module_name) =
         get_module_name_from_builtin_node_module_specifier(&url)
       {
-        return Ok(Some(NodeResolution::BuiltIn(module_name.to_string())));
+        return Ok(NodeResolution::BuiltIn(module_name.to_string()));
       }
 
       let protocol = url.scheme();
@@ -211,7 +214,7 @@ impl NodeResolver {
         let url = referrer.join(specifier).map_err(|source| {
           NodeResolveErrorKind::DataUrlReferrerFailed { source }
         })?;
-        return Ok(Some(NodeResolution::Esm(url)));
+        return Ok(NodeResolution::Esm(url));
       }
     }
 
@@ -225,7 +228,7 @@ impl NodeResolver {
     let resolve_response = self.url_to_node_resolution(url)?;
     // TODO(bartlomieju): skipped checking errors for commonJS resolution and
     // "preserveSymlinksMain"/"preserveSymlinks" options.
-    Ok(Some(resolve_response))
+    Ok(resolve_response)
   }
 
   fn module_resolve(
@@ -272,19 +275,6 @@ impl NodeResolver {
 
     let Some(url) = maybe_url else {
       return Ok(None);
-    };
-
-    let maybe_url = if mode.is_types() {
-      let file_path = to_file_path(&url);
-      // todo(16370): the referrer module kind is not correct here. I think we need
-      // typescript to tell us if the referrer is esm or cjs
-      self.path_to_declaration_url(
-        file_path,
-        Some(referrer),
-        NodeModuleKind::Esm,
-      )?
-    } else {
-      Some(url)
     };
 
     Ok(match maybe_url {
@@ -567,62 +557,20 @@ impl NodeResolver {
     path: PathBuf,
     maybe_referrer: Option<&ModuleSpecifier>,
     referrer_kind: NodeModuleKind,
-  ) -> Result<Option<ModuleSpecifier>, PathToDeclarationUrlError> {
-    fn probe_extensions(
-      fs: &dyn deno_fs::FileSystem,
-      path: &Path,
-      lowercase_path: &str,
-      referrer_kind: NodeModuleKind,
-    ) -> Option<PathBuf> {
-      let mut searched_for_d_mts = false;
-      let mut searched_for_d_cts = false;
-      if lowercase_path.ends_with(".mjs") {
-        let d_mts_path = with_known_extension(path, "d.mts");
-        if fs.exists_sync(&d_mts_path) {
-          return Some(d_mts_path);
-        }
-        searched_for_d_mts = true;
-      } else if lowercase_path.ends_with(".cjs") {
-        let d_cts_path = with_known_extension(path, "d.cts");
-        if fs.exists_sync(&d_cts_path) {
-          return Some(d_cts_path);
-        }
-        searched_for_d_cts = true;
-      }
-
-      let dts_path = with_known_extension(path, "d.ts");
-      if fs.exists_sync(&dts_path) {
-        return Some(dts_path);
-      }
-
-      let specific_dts_path = match referrer_kind {
-        NodeModuleKind::Cjs if !searched_for_d_cts => {
-          Some(with_known_extension(path, "d.cts"))
-        }
-        NodeModuleKind::Esm if !searched_for_d_mts => {
-          Some(with_known_extension(path, "d.mts"))
-        }
-        _ => None, // already searched above
-      };
-      if let Some(specific_dts_path) = specific_dts_path {
-        if fs.exists_sync(&specific_dts_path) {
-          return Some(specific_dts_path);
-        }
-      }
-      None
-    }
-
+  ) -> Result<NodeResolution, PathToDeclarationUrlError> {
     let lowercase_path = path.to_string_lossy().to_lowercase();
-    if lowercase_path.ends_with(".d.ts")
-      || lowercase_path.ends_with(".d.cts")
-      || lowercase_path.ends_with(".d.mts")
-    {
-      return Ok(Some(to_file_specifier(&path)));
+    if lowercase_path.ends_with(".d.ts") {
+      let specifier = to_file_specifier(&path);
+      return Ok(self.url_to_node_resolution(specifier)?);
+    } else if lowercase_path.ends_with(".d.cts") {
+      return Ok(NodeResolution::CommonJs(to_file_specifier(&path)));
+    } else if lowercase_path.ends_with(".d.mts") {
+      return Ok(NodeResolution::Esm(to_file_specifier(&path)));
     }
-    if let Some(path) =
-      probe_extensions(&*self.fs, &path, &lowercase_path, referrer_kind)
+    if let Some(resolution) =
+      self.probe_dts_extensions(&path, &lowercase_path, referrer_kind)?
     {
-      return Ok(Some(to_file_specifier(&path)));
+      return Ok(resolution);
     }
     if self.fs.is_dir_sync(&path) {
       let maybe_resolution = self.resolve_package_dir_subpath(
@@ -652,6 +600,59 @@ impl NodeResolver {
     // allow resolving .css files for types resolution
     if lowercase_path.ends_with(".css") {
       return Ok(Some(to_file_specifier(&path)));
+    }
+    Ok(None)
+  }
+
+  fn probe_dts_extensions(
+    &self,
+    path: &Path,
+    lowercase_path: &str,
+    referrer_kind: NodeModuleKind,
+  ) -> Result<Option<NodeResolution>, UrlToNodeResolutionError> {
+    let mut searched_for_d_mts = false;
+    let mut searched_for_d_cts = false;
+    if lowercase_path.ends_with(".mjs") {
+      let d_mts_path = with_known_extension(path, "d.mts");
+      if self.fs.exists_sync(&d_mts_path) {
+        return Ok(Some(NodeResolution::Esm(to_file_specifier(&d_mts_path))));
+      }
+      searched_for_d_mts = true;
+    } else if lowercase_path.ends_with(".cjs") {
+      let d_cts_path = with_known_extension(path, "d.cts");
+      if self.fs.exists_sync(&d_cts_path) {
+        return Ok(Some(NodeResolution::CommonJs(to_file_specifier(
+          &d_cts_path,
+        ))));
+      }
+      searched_for_d_cts = true;
+    }
+
+    let dts_path = with_known_extension(path, "d.ts");
+    if self.fs.exists_sync(&dts_path) {
+      return Ok(Some(
+        self.url_to_node_resolution(to_file_specifier(&dts_path))?,
+      ));
+    }
+
+    match referrer_kind {
+      NodeModuleKind::Cjs if !searched_for_d_cts => {
+        let specific_dts_path = with_known_extension(path, "d.cts");
+        if self.fs.exists_sync(&specific_dts_path) {
+          return Ok(Some(NodeResolution::CommonJs(to_file_specifier(
+            &specific_dts_path,
+          ))));
+        }
+      }
+      NodeModuleKind::Esm if !searched_for_d_mts => {
+        let specific_dts_path = with_known_extension(path, "d.mts");
+        if self.fs.exists_sync(&specific_dts_path) {
+          return Ok(Some(NodeResolution::Esm(to_file_specifier(
+            &specific_dts_path,
+          ))));
+        }
+      }
+      _ => (), // already searched above
     }
     Ok(None)
   }
@@ -1049,7 +1050,7 @@ impl NodeResolver {
     referrer_kind: NodeModuleKind,
     conditions: &[&str],
     mode: NodeResolutionMode,
-  ) -> Result<ModuleSpecifier, PackageExportsResolveError> {
+  ) -> Result<NodeResolution, PackageExportsResolveError> {
     if package_exports.contains_key(package_subpath)
       && package_subpath.find('*').is_none()
       && !package_subpath.ends_with('/')
@@ -1162,7 +1163,7 @@ impl NodeResolver {
     referrer_kind: NodeModuleKind,
     conditions: &[&str],
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PackageResolveError> {
+  ) -> Result<NodeResolution, PackageResolveError> {
     let (package_name, package_subpath, _is_scoped) =
       parse_npm_pkg_name(specifier, referrer)?;
 
@@ -1243,7 +1244,7 @@ impl NodeResolver {
     referrer_kind: NodeModuleKind,
     conditions: &[&str],
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PackageSubpathResolveError> {
+  ) -> Result<NodeResolution, PackageSubpathResolveError> {
     let package_dir_path = self
       .npm_resolver
       .resolve_package_folder_from_package(package_name, referrer)?;
@@ -1281,7 +1282,7 @@ impl NodeResolver {
     referrer_kind: NodeModuleKind,
     conditions: &[&str],
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PackageSubpathResolveError> {
+  ) -> Result<NodeResolution, PackageSubpathResolveError> {
     let package_json_path = package_dir_path.join("package.json");
     match self.load_package_json(&package_json_path)? {
       Some(pkg_json) => self.resolve_package_subpath(
@@ -1292,15 +1293,13 @@ impl NodeResolver {
         conditions,
         mode,
       ),
-      None => self
-        .resolve_package_subpath_no_pkg_json(
-          package_dir_path,
-          package_subpath,
-          maybe_referrer,
-          referrer_kind,
-          mode,
-        )
-        .map_err(|err| PackageSubpathResolveErrorKind::LegacyExact(err).into()),
+      None => self.resolve_package_subpath_no_pkg_json(
+        package_dir_path,
+        package_subpath,
+        maybe_referrer,
+        referrer_kind,
+        mode,
+      ),
     }
   }
 
@@ -1313,7 +1312,7 @@ impl NodeResolver {
     referrer_kind: NodeModuleKind,
     conditions: &[&str],
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PackageSubpathResolveError> {
+  ) -> Result<NodeResolution, PackageSubpathResolveError> {
     if let Some(exports) = &package_json.exports {
       let result = self.package_exports_resolve(
         &package_json.path,
@@ -1325,37 +1324,34 @@ impl NodeResolver {
         mode,
       );
       match result {
-        Ok(found) => return Ok(Some(found)),
+        Ok(found) => Ok(found),
         Err(exports_err) => {
           if mode.is_types() && package_subpath == "." {
-            return self
+            self
               .legacy_main_resolve(package_json, referrer, referrer_kind, mode)
               .map_err(|err| {
                 PackageSubpathResolveErrorKind::LegacyMain(err).into()
-              });
+              })
+          } else {
+            Err(PackageSubpathResolveErrorKind::Exports(exports_err).into())
           }
-          return Err(
-            PackageSubpathResolveErrorKind::Exports(exports_err).into(),
-          );
         }
       }
-    }
-
-    if package_subpath == "." {
-      return self
+    } else if package_subpath == "." {
+      self
         .legacy_main_resolve(package_json, referrer, referrer_kind, mode)
-        .map_err(|err| PackageSubpathResolveErrorKind::LegacyMain(err).into());
+        .map_err(|err| PackageSubpathResolveErrorKind::LegacyMain(err).into())
+    } else {
+      self
+        .resolve_subpath_exact(
+          package_json.path.parent().unwrap(),
+          package_subpath,
+          referrer,
+          referrer_kind,
+          mode,
+        )
+        .map_err(|err| PackageSubpathResolveErrorKind::LegacyExact(err).into())
     }
-
-    self
-      .resolve_subpath_exact(
-        package_json.path.parent().unwrap(),
-        package_subpath,
-        referrer,
-        referrer_kind,
-        mode,
-      )
-      .map_err(|err| PackageSubpathResolveErrorKind::LegacyExact(err).into())
   }
 
   fn resolve_subpath_exact(
@@ -1365,13 +1361,13 @@ impl NodeResolver {
     referrer: Option<&ModuleSpecifier>,
     referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PathToDeclarationUrlError> {
+  ) -> Result<NodeResolution, LegacyExactResolveError> {
     assert_ne!(package_subpath, ".");
     let file_path = directory.join(package_subpath);
     if mode.is_types() {
       Ok(self.path_to_declaration_url(file_path, referrer, referrer_kind)?)
     } else {
-      Ok(Some(to_file_specifier(&file_path)))
+      Ok(self.url_to_node_resolution(to_file_specifier(&file_path))?)
     }
   }
 
@@ -1382,7 +1378,7 @@ impl NodeResolver {
     referrer: Option<&ModuleSpecifier>,
     referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, PathToDeclarationUrlError> {
+  ) -> Result<NodeResolution, PathToDeclarationUrlError> {
     if package_subpath == "." {
       Ok(self.legacy_index_resolve(directory, referrer_kind, mode))
     } else {
@@ -1450,7 +1446,7 @@ impl NodeResolver {
     maybe_referrer: Option<&ModuleSpecifier>,
     referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
-  ) -> Result<Option<ModuleSpecifier>, LegacyMainResolveError> {
+  ) -> Result<NodeResolution, LegacyMainResolveError> {
     let maybe_main = if mode.is_types() {
       match package_json.types.as_ref() {
         Some(types) => Some(types.as_str()),
@@ -1459,10 +1455,10 @@ impl NodeResolver {
           // a corresponding declaration file
           if let Some(main) = package_json.main(referrer_kind) {
             let main = package_json.path.parent().unwrap().join(main).clean();
-            let maybe_decl_url = self
+            let maybe_decl_resolution = self
               .path_to_declaration_url(main, maybe_referrer, referrer_kind)
               .map_err(LegacyMainResolveError::PathToDeclarationUrl)?;
-            if let Some(path) = maybe_decl_url {
+            if let Some(decl_resolution) = maybe_decl_resolution {
               return Ok(Some(path));
             }
           }
@@ -1476,7 +1472,7 @@ impl NodeResolver {
     if let Some(main) = maybe_main {
       let guess = package_json.path.parent().unwrap().join(main).clean();
       if self.fs.is_file_sync(&guess) {
-        return Ok(Some(to_file_specifier(&guess)));
+        return Ok(self.url_to_node_resolution(to_file_specifier(&guess))?);
       }
 
       // todo(dsherret): investigate exactly how node and typescript handles this
@@ -1513,17 +1509,19 @@ impl NodeResolver {
 
     Ok(self.legacy_index_resolve(
       package_json.path.parent().unwrap(),
+      maybe_referrer,
       referrer_kind,
       mode,
-    ))
+    )?)
   }
 
   fn legacy_index_resolve(
     &self,
     directory: &Path,
+    maybe_referrer: Option<&ModuleSpecifier>,
     referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
-  ) -> Option<ModuleSpecifier> {
+  ) -> Result<NodeResolution, LegacyIndexResolveError> {
     let index_file_names = if mode.is_types() {
       // todo(dsherret): investigate exactly how typescript does this
       match referrer_kind {
@@ -1537,11 +1535,17 @@ impl NodeResolver {
       let guess = directory.join(index_file_name).clean();
       if self.fs.is_file_sync(&guess) {
         // TODO(bartlomieju): emitLegacyIndexDeprecation()
-        return Some(to_file_specifier(&guess));
+        return Ok(self.url_to_node_resolution(to_file_specifier(&guess))?);
       }
     }
 
-    None
+    Err(
+      PackageNotFoundError {
+        package_json_path: directory.join("package.json"),
+        maybe_referrer: maybe_referrer.map(ToOwned::to_owned),
+      }
+      .into(),
+    )
   }
 }
 
