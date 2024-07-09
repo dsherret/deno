@@ -256,8 +256,24 @@ pub enum PackageResolveErrorKind {
   SubpathResolve(#[from] PackageSubpathResolveError),
 }
 
+kinded_err!(NodeCjsResolveError, NodeCjsResolveErrorKind);
+
 #[derive(Debug, Error)]
-pub enum NodeResolveError {
+pub enum NodeCjsResolveErrorKind {
+  #[error(transparent)]
+  ModuleNotFound(#[from] ModuleNotFoundError),
+  #[error(transparent)]
+  InvalidModuleSpecifier(#[from] InvalidModuleSpecifierError),
+  #[error(transparent)]
+  PackageFolderResolveError(#[from] PackageFolderResolveError),
+  #[error(transparent)]
+  PackageSubpathResolve(#[from] PackageSubpathResolveError),
+}
+
+kinded_err!(NodeResolveError, NodeResolveErrorKind);
+
+#[derive(Debug, Error)]
+pub enum NodeResolveErrorKind {
   #[error("Failed joining '{path}' from '{base}'.")]
   RelativeJoinError {
     path: String,
@@ -304,7 +320,7 @@ pub enum FinalizeResolutionErrorKind {
   maybe_referrer.as_ref().map(|referrer| format!(" imported from '{}'", referrer)).unwrap_or_default()
 )]
 pub struct ModuleNotFoundError {
-  pub specifier: ModuleSpecifier,
+  pub specifier: String,
   pub maybe_referrer: Option<ModuleSpecifier>,
   pub typ: &'static str,
 }

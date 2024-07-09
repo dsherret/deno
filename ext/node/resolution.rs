@@ -23,7 +23,9 @@ use crate::errors::InvalidModuleSpecifierError;
 use crate::errors::InvalidPackageTargetError;
 use crate::errors::LegacyMainResolveError;
 use crate::errors::ModuleNotFoundError;
+use crate::errors::NodeCjsResolveError;
 use crate::errors::NodeResolveError;
+use crate::errors::NodeResolveErrorKind;
 use crate::errors::PackageExportsResolveError;
 use crate::errors::PackageImportNotDefinedError;
 use crate::errors::PackageImportsResolveError;
@@ -172,6 +174,7 @@ impl NodeResolver {
     &self,
     specifier: &str,
     referrer: &ModuleSpecifier,
+    referrer_kind: NodeModuleKind,
     mode: NodeResolutionMode,
   ) -> Result<Option<NodeResolution>, NodeResolveError> {
     // Note: if we are here, then the referrer is an esm module
@@ -206,7 +209,7 @@ impl NodeResolver {
       // todo(dsherret): this seems wrong
       if referrer.scheme() == "data" {
         let url = referrer.join(specifier).map_err(|source| {
-          NodeResolveError::DataUrlReferrerFailed { source }
+          NodeResolveErrorKind::DataUrlReferrerFailed { source }
         })?;
         return Ok(Some(NodeResolution::Esm(url)));
       }
@@ -236,7 +239,7 @@ impl NodeResolver {
     let maybe_url = if should_be_treated_as_relative_or_absolute_path(specifier)
     {
       Some(referrer.join(specifier).map_err(|err| {
-        NodeResolveError::RelativeJoinError {
+        NodeResolveErrorKind::RelativeJoinError {
           path: specifier.to_string(),
           base: referrer.clone(),
           source: err,
@@ -345,7 +348,7 @@ impl NodeResolver {
     } else if !is_file {
       return Err(
         ModuleNotFoundError {
-          specifier: resolved,
+          specifier: resolved.to_string(),
           maybe_referrer: maybe_referrer.map(ToOwned::to_owned),
           typ: "module",
         }
@@ -354,6 +357,102 @@ impl NodeResolver {
     }
 
     Ok(resolved)
+  }
+
+  pub fn resolve_cjs(
+    &self,
+    specifier: &str,
+    referrer: &ModuleSpecifier,
+    referrer_kind: NodeModuleKind,
+    conditions: &[&str],
+    mode: NodeResolutionMode,
+  ) -> Result<ModuleSpecifier, NodeCjsResolveError> {
+    if specifier.starts_with('/') {
+      todo!();
+    }
+
+    let referrer_path = referrer.to_file_path().unwrap();
+    if specifier.starts_with("./") || specifier.starts_with("../") {
+      if let Some(parent) = referrer_path.parent() {
+        return self
+          .file_extension_probe(parent.join(specifier), referrer)
+          .map(|p| to_file_specifier(&p))
+          .map_err(|e| e.into());
+      } else {
+        todo!();
+      }
+    }
+
+    // We've got a bare specifier or maybe bare_specifier/blah.js"
+    let (package_specifier, package_subpath, _is_scoped) =
+      parse_npm_pkg_name(specifier, &referrer)?;
+
+    // todo(dsherret): use not_found error on not found here
+    let module_dir = self.npm_resolver.resolve_package_folder_from_package(
+      package_specifier.as_str(),
+      referrer,
+    )?;
+
+    let maybe_result = self.resolve_package_dir_subpath(
+      &module_dir,
+      &package_subpath,
+      Some(referrer),
+      referrer_kind,
+      conditions,
+      mode,
+    )?;
+    if let Some(maybe_specifier) = maybe_result {
+      Ok(maybe_specifier)
+    } else {
+      Err(
+        ModuleNotFoundError {
+          typ: "script",
+          maybe_referrer: Some(referrer.clone()),
+          specifier: specifier.to_string(),
+        }
+        .into(),
+      )
+    }
+  }
+
+  fn file_extension_probe(
+    &self,
+    p: PathBuf,
+    referrer: &ModuleSpecifier,
+  ) -> Result<PathBuf, ModuleNotFoundError> {
+    let p = p.clean();
+    if self.fs.exists_sync(&p) {
+      let file_name = p.file_name().unwrap();
+      let p_js =
+        p.with_file_name(format!("{}.js", file_name.to_str().unwrap()));
+      if self.fs.is_file_sync(&p_js) {
+        return Ok(p_js);
+      } else if self.fs.is_dir_sync(&p) {
+        return Ok(p.join("index.js"));
+      } else {
+        return Ok(p);
+      }
+    } else if let Some(file_name) = p.file_name() {
+      {
+        let p_js =
+          p.with_file_name(format!("{}.js", file_name.to_str().unwrap()));
+        if self.fs.is_file_sync(&p_js) {
+          return Ok(p_js);
+        }
+      }
+      {
+        let p_json =
+          p.with_file_name(format!("{}.json", file_name.to_str().unwrap()));
+        if self.fs.is_file_sync(&p_json) {
+          return Ok(p_json);
+        }
+      }
+    }
+    Err(ModuleNotFoundError {
+      typ: "script",
+      specifier: p.to_string_lossy().to_string(),
+      maybe_referrer: Some(referrer.clone()),
+    })
   }
 
   pub fn resolve_package_subpath_from_deno_module(
@@ -1900,6 +1999,15 @@ mod tests {
       (
         "@astrojs/prism".to_string(),
         "./dist/highlighter".to_string(),
+        true
+      )
+    );
+    assert_eq!(
+      parse_npm_pkg_name("@some-package/core/actions", &dummy_referrer)
+        .unwrap(),
+      (
+        "@some-package/core".to_string(),
+        "./actions".to_string(),
         true
       )
     );
