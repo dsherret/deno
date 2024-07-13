@@ -12,14 +12,18 @@ use deno_core::futures::future::Shared;
 use deno_core::futures::FutureExt;
 use deno_core::parking_lot::Mutex;
 use deno_npm::registry::NpmPackageInfo;
+use deno_npm::registry::NpmPackageVersionInfo;
 use deno_npm::registry::NpmRegistryApi;
 use deno_npm::registry::NpmRegistryPackageInfoLoadError;
+use deno_npm::NpmSystemInfo;
+use deno_semver::package::PackageNv;
 
 use crate::args::CacheSetting;
 use crate::util::sync::AtomicFlag;
 
 use super::cache::NpmCache;
 use super::cache::RegistryInfoDownloader;
+use super::cache::TarballCache;
 
 #[derive(Debug)]
 pub struct CliNpmRegistryApi(Option<Arc<CliNpmRegistryApiInner>>);
@@ -27,10 +31,12 @@ pub struct CliNpmRegistryApi(Option<Arc<CliNpmRegistryApiInner>>);
 impl CliNpmRegistryApi {
   pub fn new(
     cache: Arc<NpmCache>,
+    tarball_cache: Arc<TarballCache>,
     registry_info_downloader: Arc<RegistryInfoDownloader>,
   ) -> Self {
     Self(Some(Arc::new(CliNpmRegistryApiInner {
       cache,
+      tarball_cache,
       force_reload_flag: Default::default(),
       mem_cache: Default::default(),
       previously_reloaded_packages: Default::default(),
@@ -70,6 +76,26 @@ impl NpmRegistryApi for CliNpmRegistryApi {
   fn mark_force_reload(&self) -> bool {
     self.inner().mark_force_reload()
   }
+
+  fn preload_system_info(&self) -> Option<NpmSystemInfo> {
+    // todo: investigate if this needs to be injected in (probably)
+    Some(NpmSystemInfo::default())
+  }
+
+  fn preload_package_nv(
+    &self,
+    nv: &PackageNv,
+    version_info: &Arc<NpmPackageVersionInfo>,
+  ) {
+    let tarball_cache = self.inner().tarball_cache.clone();
+    let version_info = version_info.clone();
+    let nv = nv.clone();
+    debug_assert_eq!(nv.version, version_info.version);
+    deno_core::unsync::spawn(async move {
+      // we'll surface the errors later
+      let _ = tarball_cache.ensure_package(&nv, &version_info.dist).await;
+    });
+  }
 }
 
 type CacheItemPendingResult =
@@ -84,6 +110,7 @@ enum CacheItem {
 #[derive(Debug)]
 struct CliNpmRegistryApiInner {
   cache: Arc<NpmCache>,
+  tarball_cache: Arc<TarballCache>,
   force_reload_flag: AtomicFlag,
   mem_cache: Mutex<HashMap<String, CacheItem>>,
   previously_reloaded_packages: Mutex<HashSet<String>>,

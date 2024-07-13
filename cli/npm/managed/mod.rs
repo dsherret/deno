@@ -34,7 +34,6 @@ use crate::args::NpmProcessState;
 use crate::args::NpmProcessStateKind;
 use crate::args::PackageJsonInstallDepsProvider;
 use crate::cache::FastInsecureHasher;
-use crate::http_util::HttpClientProvider;
 use crate::util::fs::canonicalize_path_maybe_not_exists_with_fs;
 use crate::util::progress_bar::ProgressBar;
 use crate::util::sync::AtomicFlag;
@@ -78,7 +77,14 @@ pub async fn create_managed_npm_resolver_for_lsp(
   options: CliNpmResolverManagedCreateOptions,
 ) -> Arc<dyn CliNpmResolver> {
   let npm_cache = create_cache(&options);
-  let npm_api = create_api(&options, npm_cache.clone());
+  let tarball_cache = Arc::new(TarballCache::new(
+    npm_cache.clone(),
+    options.fs.clone(),
+    options.http_client_provider.clone(),
+    options.npmrc.clone(),
+    options.text_only_progress_bar.clone(),
+  ));
+  let npm_api = create_api(&options, npm_cache.clone(), tarball_cache.clone());
   // spawn due to the lsp's `Send` requirement
   deno_core::unsync::spawn(async move {
     let snapshot = match resolve_snapshot(&npm_api, options.snapshot).await {
@@ -90,12 +96,11 @@ pub async fn create_managed_npm_resolver_for_lsp(
     };
     create_inner(
       options.fs,
-      options.http_client_provider,
       options.maybe_lockfile,
       npm_api,
       npm_cache,
-      options.npmrc,
       options.package_json_deps_provider,
+      tarball_cache,
       options.text_only_progress_bar,
       options.maybe_node_modules_path,
       options.npm_system_info,
@@ -111,16 +116,22 @@ pub async fn create_managed_npm_resolver(
   options: CliNpmResolverManagedCreateOptions,
 ) -> Result<Arc<dyn CliNpmResolver>, AnyError> {
   let npm_cache = create_cache(&options);
-  let npm_api = create_api(&options, npm_cache.clone());
+  let tarball_cache = Arc::new(TarballCache::new(
+    npm_cache.clone(),
+    options.fs.clone(),
+    options.http_client_provider.clone(),
+    options.npmrc.clone(),
+    options.text_only_progress_bar.clone(),
+  ));
+  let npm_api = create_api(&options, npm_cache.clone(), tarball_cache.clone());
   let snapshot = resolve_snapshot(&npm_api, options.snapshot).await?;
   Ok(create_inner(
     options.fs,
-    options.http_client_provider,
     options.maybe_lockfile,
     npm_api,
     npm_cache,
-    options.npmrc,
     options.package_json_deps_provider,
+    tarball_cache,
     options.text_only_progress_bar,
     options.maybe_node_modules_path,
     options.npm_system_info,
@@ -132,12 +143,11 @@ pub async fn create_managed_npm_resolver(
 #[allow(clippy::too_many_arguments)]
 fn create_inner(
   fs: Arc<dyn deno_runtime::deno_fs::FileSystem>,
-  http_client_provider: Arc<HttpClientProvider>,
   maybe_lockfile: Option<Arc<CliLockfile>>,
   npm_api: Arc<CliNpmRegistryApi>,
   npm_cache: Arc<NpmCache>,
-  npm_rc: Arc<ResolvedNpmRc>,
   package_json_deps_provider: Arc<PackageJsonInstallDepsProvider>,
+  tarball_cache: Arc<TarballCache>,
   text_only_progress_bar: crate::util::progress_bar::ProgressBar,
   node_modules_dir_path: Option<PathBuf>,
   npm_system_info: NpmSystemInfo,
@@ -148,13 +158,6 @@ fn create_inner(
     npm_api.clone(),
     snapshot,
     maybe_lockfile.clone(),
-  ));
-  let tarball_cache = Arc::new(TarballCache::new(
-    npm_cache.clone(),
-    fs.clone(),
-    http_client_provider.clone(),
-    npm_rc.clone(),
-    text_only_progress_bar.clone(),
   ));
   let fs_resolver = create_npm_fs_resolver(
     fs.clone(),
@@ -196,9 +199,11 @@ fn create_cache(options: &CliNpmResolverManagedCreateOptions) -> Arc<NpmCache> {
 fn create_api(
   options: &CliNpmResolverManagedCreateOptions,
   npm_cache: Arc<NpmCache>,
+  tarball_cache: Arc<TarballCache>,
 ) -> Arc<CliNpmRegistryApi> {
   Arc::new(CliNpmRegistryApi::new(
     npm_cache.clone(),
+    tarball_cache,
     Arc::new(RegistryInfoDownloader::new(
       npm_cache,
       options.http_client_provider.clone(),
@@ -229,9 +234,9 @@ async fn resolve_snapshot(
   }
 }
 
-async fn snapshot_from_lockfile(
+async fn snapshot_from_lockfile<TNpmRegistryApi: NpmRegistryApi>(
   lockfile: Arc<CliLockfile>,
-  api: &dyn NpmRegistryApi,
+  api: &TNpmRegistryApi,
 ) -> Result<ValidSerializedNpmResolutionSnapshot, AnyError> {
   let (incomplete_snapshot, skip_integrity_check) = {
     let lock = lockfile.lock();

@@ -79,7 +79,7 @@ impl TarballCache {
   pub async fn ensure_package(
     self: &Arc<Self>,
     package: &PackageNv,
-    dist: &NpmPackageVersionDistInfo,
+    dist: &Arc<NpmPackageVersionDistInfo>,
   ) -> Result<(), AnyError> {
     self
       .ensure_package_inner(package, dist)
@@ -90,7 +90,7 @@ impl TarballCache {
   async fn ensure_package_inner(
     self: &Arc<Self>,
     package_nv: &PackageNv,
-    dist: &NpmPackageVersionDistInfo,
+    dist: &Arc<NpmPackageVersionDistInfo>,
   ) -> Result<(), AnyError> {
     let cache_item = {
       let mut mem_cache = self.memory_cache.lock();
@@ -136,7 +136,7 @@ impl TarballCache {
   fn create_setup_future(
     self: &Arc<Self>,
     package_nv: PackageNv,
-    dist: NpmPackageVersionDistInfo,
+    dist: Arc<NpmPackageVersionDistInfo>,
   ) -> LoadFuture {
     let tarball_cache = self.clone();
     async move {
