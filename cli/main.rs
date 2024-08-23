@@ -384,7 +384,11 @@ pub(crate) fn unstable_warn_cb(feature: &str, api_name: &str) {
   );
 }
 
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 pub fn main() {
+  let _profiler = dhat::Profiler::new_heap();
   setup_panic_hook();
 
   util::unix::raise_fd_limit();
