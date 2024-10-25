@@ -1,0 +1,21 @@
+{
+  "tempDir": true,
+  "steps": [{
+    "if": "windows",
+    "args": [
+      "eval",
+      "Deno.symlinkSync('original_dir', 'junctioned', { type: 'junction' })"
+    ],
+    "output": ""
+  }, {
+    "if": "windows",
+    "args": "compile --output ../main.exe main.ts",
+    "cwd": "junctioned",
+    "output": "[WILDCARD]"
+  }, {
+    "if": "windows",
+    "commandName": "./main.exe",
+    "args": [],
+    "output": "output.out"
+  }]
+}
