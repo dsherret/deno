@@ -854,7 +854,6 @@ impl node_resolver::env::NodeResolverEnv for DenoFsNodeResolverEnv {
       .map(|stat| node_resolver::env::NodeResolverFsStat {
         is_file: stat.is_file,
         is_dir: stat.is_directory,
-        is_symlink: stat.is_symlink,
       })
       .map_err(|err| err.into_io_error())
   }

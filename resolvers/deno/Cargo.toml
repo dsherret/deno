@@ -33,4 +33,9 @@ thiserror.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+divan.workspace = true
 test_util.workspace = true
+
+[[bench]]
+name = "bench"
+harness = false

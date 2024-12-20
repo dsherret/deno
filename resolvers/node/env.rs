@@ -9,7 +9,6 @@ use crate::sync::MaybeSync;
 pub struct NodeResolverFsStat {
   pub is_file: bool,
   pub is_dir: bool,
-  pub is_symlink: bool,
 }
 
 pub trait NodeResolverEnv: std::fmt::Debug + MaybeSend + MaybeSync {
