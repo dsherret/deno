@@ -1926,7 +1926,7 @@ dependencies = [
 
 [[package]]
 name = "deno_node"
-version = "0.122.0"
+version = "0.122.1"
 dependencies = [
  "aead-gcm-stream",
  "aes",
