@@ -96,7 +96,7 @@ deno_webstorage = { version = "0.179.0", path = "./ext/webstorage" }
 # resolvers
 deno_npm_cache = { version = "0.3.0", path = "./resolvers/npm_cache" }
 deno_resolver = { version = "0.15.0", path = "./resolvers/deno" }
-node_resolver = { version = "0.22.0", path = "./resolvers/node" }
+node_resolver = { version = "0.23.0", path = "./resolvers/node" }
 
 aes = "=0.8.3"
 anyhow = "1.0.57"
