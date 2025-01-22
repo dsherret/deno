@@ -755,7 +755,9 @@ impl CliOptions {
     &self,
     config_type: TsConfigType,
   ) -> Result<TsConfigForEmit, ConfigFileError> {
-    self.workspace().resolve_ts_config_for_emit(config_type)
+    // todo(THIS PR): this seems wrong. For example, for linting shouldn't it collect
+    // this with the lint options per directory?
+    self.start_dir.to_ts_config_for_emit(config_type)
   }
 
   pub fn resolve_inspector_server(
@@ -784,8 +786,11 @@ impl CliOptions {
   pub fn to_compiler_option_types(
     &self,
   ) -> Result<Vec<deno_graph::ReferrerImports>, serde_json::Error> {
+    // todo(THIS PR): this seems wrong. I think we should supply the
+    // types for all imports to the graph and then get a subset of
+    // the graph that only contains the specific types
     self
-      .workspace()
+      .start_dir
       .to_compiler_option_types()
       .map(|maybe_imports| {
         maybe_imports
@@ -928,7 +933,9 @@ impl CliOptions {
   }
 
   pub fn check_js(&self) -> bool {
-    self.workspace().check_js()
+    // todo(THIS PR): seems wrong. This behaviour should be based
+    // on the compiler options for the member
+    self.start_dir.check_js()
   }
 
   pub fn coverage_dir(&self) -> Option<String> {
