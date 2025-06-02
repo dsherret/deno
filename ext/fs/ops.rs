@@ -142,7 +142,7 @@ fn map_permission_error(
 ) -> FsOpsError {
   match error {
     FsError::NotCapable(err) => {
-      let path = format!("{path:?}");
+      let path = path.display().to_string();
       let (path, truncated) = if path.len() > 1024 {
         (&path[0..1024], "...(truncated)")
       } else {
