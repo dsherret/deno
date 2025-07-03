@@ -1207,6 +1207,10 @@ fn new_workspace_factory_options(
     } else {
       &[]
     },
+    compiler_options_overrides: CompilerOptionsOverrides {
+      source_map_base: None,
+      preserve_jsx: false,
+    },
     config_discovery: match &flags.config_flag {
       ConfigFlag::Discover => {
         if let Some(start_paths) = flags.config_path_args(initial_cwd) {

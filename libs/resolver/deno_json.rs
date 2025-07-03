@@ -88,6 +88,15 @@ struct MemoizedValues {
   check_js: OnceCell<bool>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CompilerOptionsOverrides {
+  pub source_map_base: Option<Url>,
+  /// Preserve JSX instead of transforming it.
+  ///
+  /// This may be useful when bundling.
+  pub preserve_jsx: bool,
+}
+
 #[derive(Debug)]
 pub struct CompilerOptionsData {
   pub sources: Vec<CompilerOptionsSource>,
@@ -835,7 +844,7 @@ fn compiler_options_to_transpile_and_emit_options(
     inline_sources: options.inline_sources,
     remove_comments: false,
     source_map,
-    source_map_base: None,
+    source_map_base: overrides.source_map_base.clone(),
     source_map_file: None,
   };
   let transpile_and_emit_options_hash = {
