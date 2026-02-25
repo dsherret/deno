@@ -56,6 +56,7 @@ import_map.workspace = true
 indexmap.workspace = true
 jsonc-parser.workspace = true
 log.workspace = true
+merve.workspace = true
 node_resolver.workspace = true
 once_cell.workspace = true
 parking_lot.workspace = true

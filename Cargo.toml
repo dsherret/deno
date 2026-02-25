@@ -227,6 +227,7 @@ libz-sys = { version = "1.1.20", default-features = false }
 log = { version = "0.4.28", features = ["kv"] }
 lsp-types = { package = "ls-types", version = "=0.0.3" }
 memchr = "2.7.4"
+merve = "1.1.2"
 mime = "0.3.16"
 monch = "=0.5.0"
 netif = "0.1.6"
