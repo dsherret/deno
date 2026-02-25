@@ -25,12 +25,12 @@ impl DenoAstModuleExportAnalyzer {
 type ArcStr = std::sync::Arc<str>;
 
 impl ModuleExportAnalyzer for DenoAstModuleExportAnalyzer {
-  fn parse_module(
+  fn analyze_esm_exports(
     &self,
     specifier: Url,
     media_type: MediaType,
     source: ArcStr,
-  ) -> Result<Box<dyn super::ModuleForExportAnalysis>, JsErrorBox> {
+  ) -> Result<ModuleExportsAndReExports, JsErrorBox> {
     let maybe_parsed_source =
       self.parsed_source_cache.remove_parsed_source(&specifier);
     let parsed_source = maybe_parsed_source
@@ -46,32 +46,10 @@ impl ModuleExportAnalyzer for DenoAstModuleExportAnalyzer {
         })
       })
       .map_err(JsErrorBox::from_err)?;
-    Ok(Box::new(parsed_source))
-  }
-}
-
-impl super::ModuleForExportAnalysis for ParsedSource {
-  fn specifier(&self) -> &Url {
-    self.specifier()
-  }
-
-  fn compute_is_script(&self) -> bool {
-    self.compute_is_script()
-  }
-
-  fn analyze_cjs(&self) -> super::ModuleExportsAndReExports {
-    let analysis = ParsedSource::analyze_cjs(self);
-    super::ModuleExportsAndReExports {
+    let analysis = parsed_source.analyze_es_runtime_exports();
+    Ok(super::ModuleExportsAndReExports {
       exports: analysis.exports,
       reexports: analysis.reexports,
-    }
-  }
-
-  fn analyze_es_runtime_exports(&self) -> super::ModuleExportsAndReExports {
-    let analysis = ParsedSource::analyze_es_runtime_exports(self);
-    super::ModuleExportsAndReExports {
-      exports: analysis.exports,
-      reexports: analysis.reexports,
-    }
+    })
   }
 }

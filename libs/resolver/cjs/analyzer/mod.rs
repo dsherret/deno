@@ -40,6 +40,15 @@ pub enum DenoCjsAnalysis {
   Cjs(ModuleExportsAndReExports),
 }
 
+impl DenoCjsAnalysis {
+  pub fn is_script(&self) -> bool {
+    match self {
+      DenoCjsAnalysis::Esm | DenoCjsAnalysis::EsmAnalysis(_) => true,
+      DenoCjsAnalysis::Cjs(_) => false,
+    }
+  }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct NodeAnalysisCacheSourceHash(pub u64);
 
@@ -91,13 +100,6 @@ pub trait DenoCjsCodeAnalyzerSys:
 {
 }
 
-pub trait ModuleForExportAnalysis {
-  fn specifier(&self) -> &Url;
-  fn compute_is_script(&self) -> bool;
-  fn analyze_cjs(&self) -> ModuleExportsAndReExports;
-  fn analyze_es_runtime_exports(&self) -> ModuleExportsAndReExports;
-}
-
 #[allow(clippy::disallowed_types)]
 pub type ModuleExportAnalyzerRc =
   deno_maybe_sync::MaybeArc<dyn ModuleExportAnalyzer>;
@@ -106,25 +108,31 @@ pub type ModuleExportAnalyzerRc =
 type ArcStr = std::sync::Arc<str>;
 
 pub trait ModuleExportAnalyzer: MaybeSend + MaybeSync {
-  fn parse_module(
+  fn analyze_esm_exports(
     &self,
     specifier: Url,
     media_type: MediaType,
     source: ArcStr,
-  ) -> Result<Box<dyn ModuleForExportAnalysis>, JsErrorBox>;
+  ) -> Result<ModuleExportsAndReExports, JsErrorBox>;
 }
 
 /// A module export analyzer that will error when parsing a module.
 pub struct NotImplementedModuleExportAnalyzer;
 
 impl ModuleExportAnalyzer for NotImplementedModuleExportAnalyzer {
-  fn parse_module(
+  fn analyze_esm_exports(
     &self,
     _specifier: Url,
     _media_type: MediaType,
     _source: ArcStr,
-  ) -> Result<Box<dyn ModuleForExportAnalysis>, JsErrorBox> {
-    panic!("Enable the deno_ast feature to get module export analysis.");
+  ) -> Result<ModuleExportsAndReExports, JsErrorBox> {
+    debug_assert!(
+      false,
+      "Enable the deno_ast feature to get module export analysis."
+    );
+    // don't bother returning this for DenoRT when it doesn't exist.
+    // Node.js doesn't include the exports: https://github.com/nodejs/merve/issues/26
+    Ok(Default::default())
   }
 }
 
@@ -160,16 +168,24 @@ impl<TSys: DenoCjsCodeAnalyzerSys> DenoCjsCodeAnalyzer<TSys> {
     source: &str,
     esm_analysis_mode: EsmAnalysisMode,
   ) -> Result<DenoCjsAnalysis, JsErrorBox> {
+    let media_type = MediaType::from_specifier(specifier);
+    if media_type == MediaType::Json {
+      return Ok(DenoCjsAnalysis::Cjs(Default::default()));
+    }
+
     let source = source.strip_prefix('\u{FEFF}').unwrap_or(source); // strip BOM
     let source_hash = self.cache.compute_source_hash(source);
     if let Some(analysis) = self.cache.get_cjs_analysis(specifier, source_hash)
     {
-      return Ok(analysis);
-    }
-
-    let media_type = MediaType::from_specifier(specifier);
-    if media_type == MediaType::Json {
-      return Ok(DenoCjsAnalysis::Cjs(Default::default()));
+      match &analysis {
+        DenoCjsAnalysis::Esm => match esm_analysis_mode {
+          EsmAnalysisMode::SourceOnly => return Ok(analysis),
+          EsmAnalysisMode::SourceImportsAndExports => {}
+        },
+        DenoCjsAnalysis::EsmAnalysis(_) | DenoCjsAnalysis::Cjs(_) => {
+          return Ok(analysis);
+        }
+      }
     }
 
     let cjs_tracker = self.cjs_tracker.clone();
@@ -185,28 +201,57 @@ impl<TSys: DenoCjsCodeAnalyzerSys> DenoCjsCodeAnalyzer<TSys> {
         let specifier = specifier.clone();
         let source: ArcStr = source.into();
         move || -> Result<_, JsErrorBox> {
-          let parsed_source = module_export_analyzer
-            .parse_module(specifier, media_type, source)?;
-          let is_script = is_maybe_cjs && parsed_source.compute_is_script();
-          let is_cjs = is_maybe_cjs
-            && cjs_tracker
-              .is_cjs_with_known_is_script(
-                parsed_source.specifier(),
-                media_type,
-                is_script,
-              )
-              .map_err(JsErrorBox::from_err)?;
-          if is_cjs {
-            let analysis = parsed_source.analyze_cjs();
-            Ok(DenoCjsAnalysis::Cjs(analysis))
+          let analysis = if is_maybe_cjs {
+            match merve::parse_commonjs(source.as_ref()) {
+              Ok(result) => DenoCjsAnalysis::Cjs(ModuleExportsAndReExports {
+                exports: result.exports().map(|e| e.name.to_string()).collect(),
+                reexports: result
+                  .reexports()
+                  .map(|e| e.name.to_string())
+                  .collect(),
+              }),
+              Err(err) => match err {
+                merve::LexerError::EmptySource => {
+                  // always just return this as cjs
+                  DenoCjsAnalysis::Cjs(ModuleExportsAndReExports::default())
+                }
+                merve::LexerError::UnexpectedEsmImportMeta
+                | merve::LexerError::UnexpectedEsmImport
+                | merve::LexerError::UnexpectedEsmExport => {
+                  DenoCjsAnalysis::Esm
+                }
+                merve::LexerError::UnexpectedParen
+                | merve::LexerError::UnexpectedBrace
+                | merve::LexerError::UnterminatedParen
+                | merve::LexerError::UnterminatedBrace
+                | merve::LexerError::UnterminatedTemplateString
+                | merve::LexerError::UnterminatedStringLiteral
+                | merve::LexerError::UnterminatedRegexCharacterClass
+                | merve::LexerError::UnterminatedRegex
+                | merve::LexerError::TemplateNestOverflow
+                | merve::LexerError::Unknown(_) => {
+                  // TODO(@dsherret): possibly return the error here
+                  DenoCjsAnalysis::Cjs(ModuleExportsAndReExports::default())
+                }
+              },
+            }
           } else {
-            match esm_analysis_mode {
-              EsmAnalysisMode::SourceOnly => Ok(DenoCjsAnalysis::Esm),
+            DenoCjsAnalysis::Esm
+          };
+          if is_maybe_cjs {
+            cjs_tracker.set_is_known_script(&specifier, analysis.is_script());
+          }
+          match &analysis {
+            DenoCjsAnalysis::Esm => match esm_analysis_mode {
+              EsmAnalysisMode::SourceOnly => Ok(analysis),
               EsmAnalysisMode::SourceImportsAndExports => {
-                Ok(DenoCjsAnalysis::EsmAnalysis(
-                  parsed_source.analyze_es_runtime_exports(),
-                ))
+                let analysis = module_export_analyzer
+                  .analyze_esm_exports(specifier, media_type, source)?;
+                Ok(DenoCjsAnalysis::EsmAnalysis(analysis))
               }
+            },
+            DenoCjsAnalysis::EsmAnalysis(_) | DenoCjsAnalysis::Cjs(_) => {
+              Ok(analysis)
             }
           }
         }
