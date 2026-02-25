@@ -1,12 +1,12 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
 
 use deno_ast::MediaType;
-use deno_ast::ParsedSource;
 use deno_error::JsErrorBox;
 use deno_graph::ast::ParsedSourceStore;
 use url::Url;
 
 use super::ModuleExportAnalyzer;
+use super::ModuleExportsAndReExports;
 use crate::cache::ParsedSourceCacheRc;
 
 pub struct DenoAstModuleExportAnalyzer {

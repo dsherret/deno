@@ -201,16 +201,29 @@ impl<TSys: DenoCjsCodeAnalyzerSys> DenoCjsCodeAnalyzer<TSys> {
         let specifier = specifier.clone();
         let source: ArcStr = source.into();
         move || -> Result<_, JsErrorBox> {
+          eprintln!("Is maybe cjs: {}", is_maybe_cjs);
           let analysis = if is_maybe_cjs {
+            eprintln!("Parsing...");
+            eprintln!("Source: {:?}", source);
             match merve::parse_commonjs(source.as_ref()) {
-              Ok(result) => DenoCjsAnalysis::Cjs(ModuleExportsAndReExports {
-                exports: result.exports().map(|e| e.name.to_string()).collect(),
-                reexports: result
-                  .reexports()
-                  .map(|e| e.name.to_string())
-                  .collect(),
-              }),
-              Err(err) => match err {
+              Ok(result) => {
+                eprintln!(
+                  "Counts: {} {}",
+                  result.exports_count(),
+                  result.reexports_count()
+                );
+                dbg!(DenoCjsAnalysis::Cjs(ModuleExportsAndReExports {
+                  exports: result
+                    .exports()
+                    .map(|e| e.name.to_string())
+                    .collect(),
+                  reexports: result
+                    .reexports()
+                    .map(|e| e.name.to_string())
+                    .collect(),
+                }))
+              }
+              Err(err) => match dbg!(err) {
                 merve::LexerError::EmptySource => {
                   // always just return this as cjs
                   DenoCjsAnalysis::Cjs(ModuleExportsAndReExports::default())
@@ -238,7 +251,9 @@ impl<TSys: DenoCjsCodeAnalyzerSys> DenoCjsCodeAnalyzer<TSys> {
           } else {
             DenoCjsAnalysis::Esm
           };
-          if is_maybe_cjs {
+          if is_maybe_cjs
+            && !matches!(media_type, MediaType::Cjs | MediaType::Cts)
+          {
             cjs_tracker.set_is_known_script(&specifier, analysis.is_script());
           }
           match &analysis {
