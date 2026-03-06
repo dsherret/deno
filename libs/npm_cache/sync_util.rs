@@ -3,8 +3,7 @@
 use parking_lot::Condvar;
 use parking_lot::Mutex;
 
-/// A blocking counting semaphore for use on synchronous threads
-/// (e.g. inside `spawn_blocking`).
+/// A blocking counting semaphore.
 pub struct BlockingSemaphore {
   state: Mutex<usize>,
   cond: Condvar,
