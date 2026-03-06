@@ -57,6 +57,9 @@ impl HttpClientProvider {
   ) -> Self {
     Self {
       options: CreateHttpClientOptions {
+        dns_resolver: deno_fetch::dns::Resolver::gai_cached(
+          std::time::Duration::from_secs(30),
+        ),
         unsafely_ignore_certificate_errors,
         ..Default::default()
       },
