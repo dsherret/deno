@@ -34,6 +34,7 @@ mod fs_util;
 mod registry_info;
 mod remote;
 mod rt;
+mod sync_util;
 mod tarball;
 mod tarball_extract;
 

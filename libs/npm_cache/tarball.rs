@@ -20,6 +20,7 @@ use crate::NpmCacheSys;
 use crate::remote::maybe_auth_header_value_for_npm_registry;
 use crate::rt::MultiRuntimeAsyncValueCreator;
 use crate::rt::spawn_blocking;
+use crate::sync_util::BlockingSemaphore;
 use crate::tarball_extract::TarballExtractionMode;
 use crate::tarball_extract::verify_and_decompress_tarball;
 use crate::tarball_extract::write_extracted_tarball;
@@ -57,7 +58,7 @@ pub struct TarballCache<THttpClient: NpmCacheHttpClient, TSys: NpmCacheSys> {
   npmrc: Arc<ResolvedNpmRc>,
   memory_cache: Mutex<HashMap<PackageNv, MemoryCacheItem>>,
   #[cfg(not(target_arch = "wasm32"))]
-  fs_write_semaphore: Arc<tokio::sync::Semaphore>,
+  fs_write_semaphore: Arc<BlockingSemaphore>,
 
   reporter: Option<Arc<dyn TarballCacheReporter>>,
 }
@@ -94,7 +95,7 @@ impl<THttpClient: NpmCacheHttpClient, TSys: NpmCacheSys>
       npmrc,
       memory_cache: Default::default(),
       #[cfg(not(target_arch = "wasm32"))]
-      fs_write_semaphore: Arc::new(tokio::sync::Semaphore::new(
+      fs_write_semaphore: Arc::new(BlockingSemaphore::new(
         MAX_CONCURRENT_FS_WRITES,
       )),
       reporter,
@@ -251,36 +252,28 @@ impl<THttpClient: NpmCacheHttpClient, TSys: NpmCacheSys>
             // renaming. So we settle for overwriting.
             TarballExtractionMode::Overwrite
           };
-          // Phase 1: verify integrity + decompress (CPU-bound, no concurrency limit)
-          let tar_data = spawn_blocking(move || {
-            verify_and_decompress_tarball(&package_nv, &bytes, &dist)
-          })
-          .await
-          .map_err(JsErrorBox::from_err)?
-          .map_err(JsErrorBox::from_err)?;
-          // Phase 2: write to disk (I/O-bound, limited concurrency to
-          // avoid filesystem contention — especially on macOS APFS)
           #[cfg(not(target_arch = "wasm32"))]
-          let permit = tarball_cache
-            .fs_write_semaphore.clone()
-            .acquire_owned()
-            .await
-            .map_err(|e| JsErrorBox::generic(e.to_string()))?;
-
+          let fs_write_semaphore = tarball_cache.fs_write_semaphore.clone();
           spawn_blocking(move || {
-            let result = write_extracted_tarball(
+            // Phase 1: verify integrity + decompress (CPU-bound, ungated)
+            let tar_data = verify_and_decompress_tarball(
+              &package_nv, &bytes, &dist,
+            )
+            .map_err(JsErrorBox::from_err)?;
+            // Phase 2: write to disk (I/O-bound, limited concurrency to
+            // avoid filesystem contention — especially on macOS APFS)
+            #[cfg(not(target_arch = "wasm32"))]
+            let _permit = fs_write_semaphore.acquire();
+            write_extracted_tarball(
               &sys,
               &tar_data,
               &package_folder,
               extraction_mode,
-            );
-            #[cfg(not(target_arch = "wasm32"))]
-            drop(permit);
-            result
+            )
+            .map_err(JsErrorBox::from_err)
           })
           .await
           .map_err(JsErrorBox::from_err)?
-          .map_err(JsErrorBox::from_err)
         }
         None => {
           Err(JsErrorBox::generic(format!("Could not find npm package tarball at: {}", dist.tarball)))
